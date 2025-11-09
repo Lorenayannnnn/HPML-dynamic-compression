@@ -1,16 +1,31 @@
-import torch
-from transformers import AutoModel
 
 
 def load_model(configs):
+    from transformers import AutoModel
+    from src.model_module.compression_classifier import CompressionClassifier
+    from src.model_module.compression_probe_model import CompressionProbeModel
+
     """main function for loading the model_module"""
-    model = AutoModel.from_pretrained(
+    lm = AutoModel.from_pretrained(
         configs.training_args.resume_from_checkpoint if configs.training_args.resume_from_checkpoint else configs.model_args.model_name_or_path,
         cache_dir=configs.data_args.cache_dir,
         load_in_8bit=True,
         device_map="auto",
-        torch_dtype=torch.float16
+        torch_dtype="auto"
     )
+
+    compression_classifier = CompressionClassifier(
+        hidden_size=lm.config.hidden_size, 
+        dropout=configs.model_args.classifier_dropout if hasattr(configs.model_args, 'classifier_dropout') else 0.1
+    )
+    
+    # Wrap both in the probe model
+    model = CompressionProbeModel(
+        language_model=lm,
+        compression_classifier=compression_classifier,
+        freeze_lm=True  # Keep LM frozen, only train classifier
+    )
+
     # Set up LoRA
     # if configs.training_args.resume_from_checkpoint:
     #     with open(os.path.join(configs.training_args.resume_from_checkpoint, "adapter_config.json")) as f:

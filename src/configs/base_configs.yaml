@@ -6,29 +6,29 @@ data_args:
   max_train_samples: null
   max_eval_samples: null
   max_predict_samples: null
-  #  Tokenization
-  max_seq_length: 512
-  pad_to_max_length: False
-  pad_to_multiple_of: 8
-  ignore_pad_token_for_loss: True
-  train_on_inputs: True
-  add_bos_token: False
-  add_eos_token: False
-  num_beams: null
 
-model_args:
+  train_dev_test_split_ratio: [0.8, 0.1, 0.1]
+
+  #  Tokenization
+  max_seq_length: 1024
+  pad_to_multiple_of: 8
+  padding_side: "left"
+
+model_args:   # configs for language model
   model_name_or_path: null
   config_name: null
   tokenizer_name: null
-  use_fast_tokenizer: False
-  model_revision: "main"
-  token: False
+  compression_token: "<COMP>"
+
   # ----- lora hyperparameters -----
   # lora_weights: null
   #  lora_r: 16
   #  lora_alpha: 16
   #  lora_dropout: 0.05
   #  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "fc1", "fc2"]
+
+classifier_args:
+  dropout: 0.1
 
 training_args:
   output_dir: outputs
@@ -42,7 +42,7 @@ training_args:
   batch_size: 128
   micro_batch_size: 16
   learning_rate: 0.00005
-  lr_scheduler_type: "linear"
+  lr_scheduler_type: "cosine"
   resume_from_checkpoint: null
 
   evaluation_strategy: "steps"
@@ -52,9 +52,10 @@ training_args:
   prediction_loss_only: False
 
   # wandb
-  wandb_usr: null
-  wandb_project: ""
-  wandb_run_name: ""
+  use_wandb: True
+  wandb_usr: null   # your wandb username
+  wandb_project: "hpml-group-project-dynamic-compression"
+  wandb_run_name: "test"
   wandb_watch: ""
   wandb_log_model: ""
 

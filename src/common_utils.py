@@ -5,19 +5,16 @@ import numpy as np
 import torch
 import wandb
 from omegaconf import OmegaConf
-from transformers import set_seed
-
 
 def seed_all(seed):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
     random.seed(seed)
-    set_seed(seed)
-
-def prepare_folder(output_dir):
-    """Prepare a folder for a file"""
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def prepare_wandb(configs):
     # Check if parameter passed or if set within environ
@@ -38,9 +35,7 @@ def prepare_wandb(configs):
         configs.training_args.use_wandb = False
     return configs
 
-def load_config_and_setup_output_dir(configs):
-    output_dir = configs.training_args.output_dir
-
+def setup(configs):
     if configs.training_args.resume_from_checkpoint is not None:
         # Load configs from checkpoint
         output_dir = os.path.dirname(configs.training_args.resume_from_checkpoint)
@@ -50,9 +45,8 @@ def load_config_and_setup_output_dir(configs):
         loaded_configs.training_args.resume_from_checkpoint = configs.training_args.resume_from_checkpoint
         configs = loaded_configs
 
-    # Prepare output directory: automatically craeted by hydra
-    # configs.training_args.output_dir = output_dir
-    # prepare_folder(output_dir)
-    # OmegaConf.save(configs, os.path.join(output_dir, "configs.yaml"))
+    seed_all(configs.training_args.seed)
+
+    configs = prepare_wandb(configs)
 
     return configs

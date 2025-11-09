@@ -3,7 +3,69 @@
 - functions: tokenize, padding, collate_fn, setup_dataloader...
 """
 
-from transformers import AutoTokenizer
+import random
+import numpy as np
+
+def create_tokenizer(configs):
+    """creates the tokenizer"""
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(
+        configs.model_args.tokenizer_name if configs.model_args.tokenizer_name else configs.model_args.model_name_or_path,
+        padding_side=configs.data_args.padding_side,
+        cache_dir=configs.data_args.cache_dir,
+    )
+    tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+
+def tokenize(input_text, configs, tokenizer):
+    comp_token_str = configs.model_args.compression_token
+    
+    # Split CoT by comp token str
+    subsequences = input_text.split(comp_token_str)
+    
+    # Tokenize subsequences and mark the last token of each subsequence whose next token should be <COMP> (positive sample)
+    input_ids = []
+    next_is_comp = []
+    comp_indices = []
+    non_comp_indices = []
+    for part in subsequences[:-1]:
+        subseq_token_ids = tokenizer(part, add_special_tokens=False)['input_ids']
+        input_ids.extend(subseq_token_ids)
+        next_is_comp.extend([0] * (len(subseq_token_ids) - 1) + [1])
+        comp_indices.append(len(input_ids) - 1)
+        non_comp_indices.extend(range(len(input_ids) - 1))
+
+    # Randomly select equal number of negative samples
+    num_negatives = len(comp_indices)
+    assert num_negatives <= len(non_comp_indices), "Not enough non-COMP tokens to sample negatives from."
+    negative_sample_indices = list(random.sample(non_comp_indices, num_negatives)) if num_negatives > 0 else []
+    
+    # Create new next_is_COMP label based on the new positive and negative samples (the rest will be ignored in the loss with -100 index)
+    next_is_comp_label = np.array([-100] * len(input_ids))
+    next_is_comp_label[comp_indices] = 1
+    next_is_comp_label[list(negative_sample_indices)] = 0
+
+    tokenized_entry = {
+        'chat_gpt_cot_w_COMP': input_text,
+        'chat_gpt_cot_wo_COMP': "".join(subsequences),
+        'input_ids': input_ids,
+        'attention_mask': [1] * len(input_ids),
+        'next_is_COMP': next_is_comp,       # original next_is_COMP (not used in training); keep this just in case
+        'labels': next_is_comp_label
+    }
+
+    return tokenized_entry
+
+def create_data_collator(configs, tokenizer):
+    """creates the data collator"""
+    from src.data_module.DataCollator import DataCollator
+    data_collator = DataCollator(
+        tokenizer=tokenizer,
+        padding=True,
+        pad_to_multiple_of=configs.data_args.pad_to_multiple_of,
+    )
+    return data_collator
 
 
 def preprocess(configs, raw_datasets):
@@ -28,18 +90,18 @@ def preprocess(configs, raw_datasets):
         print("Example: ", decoded_text)
 
     if configs.training_args.do_eval:
-        if "validation" not in raw_datasets and "validation_matched" not in raw_datasets:
+        if "validation" not in raw_datasets:
             raise ValueError("--do_eval requires a validation dataset")
-        eval_dataset = raw_datasets["validation_matched" if configs.data_args.dataset_name == "mnli" else "validation"]
+        eval_dataset = raw_datasets["validation"]
         if configs.data_args.max_eval_samples is not None:
             configs.data_args.max_eval_samples = min(configs.data_args.max_eval_samples, len(eval_dataset))
             eval_dataset = eval_dataset.select(range(configs.data_args.max_eval_samples))
         tokenized_eval_dataset = eval_dataset.map(tokenize, fn_kwargs={"configs": configs, "tokenizer": tokenizer})
 
     if configs.training_args.do_predict:
-        if "predict" not in raw_datasets and "test_matched" not in raw_datasets:
+        if "predict" not in raw_datasets:
             raise ValueError("--do_predict requires a test dataset")
-        predict_dataset = raw_datasets["validation_matched" if configs.data_args.dataset_name == "mnli" else "validation"]
+        predict_dataset = raw_datasets["test"]
         if configs.data_args.max_predict_samples is not None:
             max_predict_samples = min(len(predict_dataset), configs.data_args.max_predict_samples)
             predict_dataset = predict_dataset.select(range(max_predict_samples))
@@ -47,42 +109,8 @@ def preprocess(configs, raw_datasets):
 
     return {
         "train": tokenized_train_dataset,
-        "eval": tokenized_eval_dataset,
+        "validation": tokenized_eval_dataset,
         "predict": tokenized_predict_dataset
-    }, tokenizer
+    }, tokenizer, create_data_collator(configs, tokenizer)
 
-def create_tokenizer(configs):
-    """creates the tokenizer"""
-    tokenizer = AutoTokenizer.from_pretrained(
-        configs.model_args.tokenizer_name if configs.model_args.tokenizer_name else configs.model_args.model_name_or_path,
-        padding_side="left",
-        add_bos_token=configs.data_args.add_bos_token,
-        add_eos_token=configs.data_args.add_eos_token,
-        cache_dir=configs.data_args.cache_dir,
-        use_fast=configs.model_args.use_fast_tokenizer,
-        revision=configs.model_args.model_revision,
-    )
-    tokenizer.pad_token = tokenizer.eos_token
-    return tokenizer
-
-
-def tokenize(input_text, configs, tokenizer):
-    result = tokenizer(
-        input_text,
-        truncation=True,
-        max_length=configs.data_args.max_seq_length,
-        pad_to_multiple_of=configs.data_args.pad_to_multiple_of
-    )
-
-    if (
-            result["input_ids"][-1] != tokenizer.eos_token_id
-            and len(result["input_ids"]) < configs.data_args.max_seq_length
-            and configs.data_args.add_eos_token
-    ):
-        result["input_ids"].append(tokenizer.eos_token_id)
-        result["attention_mask"].append(1)
-
-    # result["labels"] = result["input_ids"].copy()
-    result["labels"] = [-100 if x == tokenizer.pad_token_id else x for x in result["input_ids"]]
-    return result
 
