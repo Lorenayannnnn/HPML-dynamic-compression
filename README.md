@@ -25,7 +25,7 @@
 1. Entry point: [main.py](src/main.py)
 2. Configuration file: [base_configs.yaml](src/configs/base_configs.yaml). Change compression_token under model_args and other configs accordingly.
 3. Load data: [load_data.py](src/data_module/load_data.py). I added train, val, and test split in here in case our dataset doesn't have it already. We can also create the split beforehand. Up to you guys.
-4. Data preprocessing: Refer to ```def preprocess``` function in [load_data.py](src/data_module/load_data.py), which contains splitting CoT by <COMP> token
+4. Data preprocessing: Refer to ```def preprocess``` function in [load_data.py](src/data_module/load_data.py), which contains splitting CoT by \<COMP\> token
 5. Initialize model:
     - Compression Classifier: [compression_classifier.py](src/model_module/compression_classifier.py); takes in hidden states and labels and calculate BCE loss
     - Wrapper Model (wrap language model and the classifier): [compression_probe_model.py](src/model_module/compression_probe_model.py)
