@@ -12,7 +12,7 @@ def create_trainer_args(configs):
         learning_rate=training_args.learning_rate,
         logging_steps=10,
         optim="adamw_torch",
-        evaluation_strategy="steps" if training_args.do_eval else "no",
+        eval_strategy="steps" if training_args.do_eval else "no",
         save_strategy=training_args.save_strategy,
         eval_steps=200 if training_args.do_eval else None,
         save_steps=200,
@@ -20,7 +20,7 @@ def create_trainer_args(configs):
         save_total_limit=training_args.save_total_limit,
         load_best_model_at_end=True if training_args.do_eval else False,
         metric_for_best_model="eval_loss",
-        report_to="wandb" if configs.use_wandb else None,
+        report_to="wandb" if training_args.use_wandb else None,
         run_name=training_args.wandb_run_name if training_args.use_wandb else None,
     )
     return args

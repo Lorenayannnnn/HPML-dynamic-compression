@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from compression_classifier import CompressionClassifier
+from src.model_module.compression_classifier import CompressionClassifier
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 
@@ -35,16 +35,14 @@ class CompressionProbeModel(nn.Module):
         Args:
             input_ids: Input token IDs (batch_size, seq_len)
             attention_mask: Attention mask (batch_size, seq_len)
-            next_is_COMP_label: Binary labels for compression (batch_size, seq_len)
-            labels: Alias for next_is_COMP_label (for HuggingFace compatibility)
+            labels: Binary labels for compression (batch_size, seq_len)
                     Values: 1 (next token is COMP), 0 (next token is not COMP), -100 (ignore when computing loss)
-        
+
         Returns:
             SequenceClassifierOutput with loss and logits and (optional) hidden states
         """
-        # Use labels as fallback if next_is_COMP_label is not provided
-        if next_is_COMP_label is None and labels is not None:
-            next_is_COMP_label = labels
+        # labels contains the compression labels (1=COMP, 0=not COMP, -100=ignore)
+        next_is_COMP_label = labels
         # Get hidden states from the language model
         with torch.no_grad():
             lm_outputs = self.language_model(
@@ -56,6 +54,8 @@ class CompressionProbeModel(nn.Module):
         
         # Pass the hidden states from the last layer to the classifier
         hidden_states = lm_outputs.hidden_states[-1]  # (batch_size, seq_len, hidden_size)
+        # Cast to float32 for classifier (LM outputs fp16, classifier needs fp32 for stable training)
+        hidden_states = hidden_states.float()
         logits = self.compression_classifier(hidden_states)  # (batch_size, seq_len)
         
         loss = None

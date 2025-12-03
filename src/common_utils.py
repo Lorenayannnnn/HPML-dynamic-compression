@@ -1,5 +1,5 @@
 import os
-from random import random
+import random
 
 import numpy as np
 import torch
@@ -29,6 +29,8 @@ def prepare_wandb(configs):
             os.environ["WANDB_WATCH"] = configs.training_args.wandb_watch
         if len(configs.training_args.wandb_log_model) > 0:
             os.environ["WANDB_LOG_MODEL"] = configs.training_args.wandb_log_model
+        # Use OmegaConf to allow adding new keys
+        OmegaConf.set_struct(configs, False)
         configs.wandb_run_name = configs.training_args.output_dir.split("/")[-1]
         wandb.init(project=os.environ["WANDB_PROJECT"], name=configs.wandb_run_name)
     else:
