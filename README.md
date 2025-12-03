@@ -4,10 +4,6 @@
 
 This project extends CCM (Compressed Context Memory) from conversation compression to **reasoning compression** by using a learned classifier to dynamically predict where to insert `<COMP>` tokens.
 
-**Base Model:** `unsloth/Meta-Llama-3.1-8B-Instruct`
-**GPU:** 2x NVIDIA RTX 6000 (48GB each)
-**Compression Token:** `<COMP>`
-
 ## Structure
 
 ```
@@ -62,7 +58,6 @@ pip install -r Project/HPML-dynamic-compression/requirements.txt
 Generate GSM8K samples with `<COMP>` tokens using GPT-4o-mini:
 
 ```bash
-# From COMS6998-HPML directory
 uv run python Project/HPML-dynamic-compression/src/data_module/generate_compression_dataset.py \
     --num_samples 500 \
     --output Project/HPML-dynamic-compression/data/gsm8k_compressed_train.json
@@ -85,7 +80,6 @@ Script supports resuming (from crashes/rate limiting).
 Train the binary classifier to predict `<COMP>` token positions:
 
 ```bash
-# From HPML-dynamic-compression directory (single GPU recommended)
 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. uv run python src/main.py --config-name gsm8k_classifier
 ```
 
