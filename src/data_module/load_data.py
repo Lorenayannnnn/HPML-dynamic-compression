@@ -87,3 +87,51 @@ def setup_dataloader(input_datasets, batch_size, tokenizer):
         else:
             dataloaders[split] = DataLoader(input_datasets[split], shuffle=split == "train", batch_size=batch_size, collate_fn=DataCollator(tokenizer))
     return dataloaders
+
+
+def load_gsm8k_compressed(data_path, train_dev_test_split_ratio, seed):
+    """Load GSM8K compressed dataset from JSON file.
+
+    The dataset contains reasoning traces with <COMP> tokens marking
+    compression points. Format:
+    {
+        "question": "...",
+        "reasoning_with_compression": "... <COMP> ... <COMP> ...",
+        "answer": "42",
+        "original_reasoning": "..."
+    }
+
+    Args:
+        data_path: Path to the JSON file (e.g., data/gsm8k_compressed_train.json)
+        train_dev_test_split_ratio: List of [train, val, test] fractions
+        seed: Random seed for shuffling
+
+    Returns:
+        DatasetDict with 'train', 'validation', 'test' splits
+    """
+    import random
+
+    with open(data_path, 'r') as f:
+        data = json.load(f)
+
+    # Shuffle data
+    random.seed(seed)
+    random.shuffle(data)
+
+    # Calculate split sizes
+    n = len(data)
+    train_frac, val_frac, test_frac = train_dev_test_split_ratio
+    train_end = int(n * train_frac)
+    val_end = train_end + int(n * val_frac)
+
+    # Create splits
+    train_data = data[:train_end]
+    val_data = data[train_end:val_end]
+    test_data = data[val_end:]
+
+    # Convert to HuggingFace Dataset
+    return datasets.DatasetDict({
+        'train': datasets.Dataset.from_list(train_data),
+        'validation': datasets.Dataset.from_list(val_data),
+        'test': datasets.Dataset.from_list(test_data)
+    })

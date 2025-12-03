@@ -68,10 +68,48 @@ def create_data_collator(configs, tokenizer):
     return data_collator
 
 
+def tokenize_gsm8k(example, configs, tokenizer):
+    """Wrapper for GSM8K format: extracts reasoning_with_compression field.
+
+    GSM8K compressed format:
+    {
+        "question": "...",
+        "reasoning_with_compression": "... <COMP> ... <COMP> ...",
+        "answer": "42",
+        "original_reasoning": "..."
+    }
+
+    This extracts the reasoning_with_compression field and passes it to
+    the standard tokenize() function.
+
+    Args:
+        example: A single example from the GSM8K compressed dataset
+        configs: Configuration object with model_args
+        tokenizer: HuggingFace tokenizer
+
+    Returns:
+        Tokenized entry with input_ids, attention_mask, and labels
+    """
+    input_text = example.get('reasoning_with_compression', '')
+    if not input_text:
+        raise ValueError(
+            f"Missing 'reasoning_with_compression' in example. "
+            f"Available keys: {list(example.keys())}"
+        )
+    return tokenize(input_text, configs, tokenizer)
+
+
 def preprocess(configs, raw_datasets):
     """takes in the raw dataset and preprocesses it into the format we want"""
 
     tokenizer = create_tokenizer(configs)
+
+    # Determine which tokenize function to use based on dataset
+    is_gsm8k = (
+        hasattr(configs.data_args, 'dataset_name') and
+        configs.data_args.dataset_name == "gsm8k_compressed"
+    )
+    tokenize_fn = tokenize_gsm8k if is_gsm8k else tokenize
 
     # shuffle the dataset
     raw_datasets = raw_datasets.shuffle(seed=configs.training_args.seed)
@@ -84,7 +122,7 @@ def preprocess(configs, raw_datasets):
         if configs.data_args.max_train_samples is not None:
             configs.data_args.max_train_samples = min(configs.data_args.max_train_samples, len(train_dataset))
             train_dataset = train_dataset.select(range(configs.data_args.max_train_samples))
-        tokenized_train_dataset = train_dataset.map(tokenize, fn_kwargs={"configs": configs, "tokenizer": tokenizer})
+        tokenized_train_dataset = train_dataset.map(tokenize_fn, fn_kwargs={"configs": configs, "tokenizer": tokenizer})
         # Print an example of the tokenized dataset
         decoded_text = tokenizer.decode(tokenized_train_dataset[0]['input_ids'])
         print("Example: ", decoded_text)
@@ -96,7 +134,7 @@ def preprocess(configs, raw_datasets):
         if configs.data_args.max_eval_samples is not None:
             configs.data_args.max_eval_samples = min(configs.data_args.max_eval_samples, len(eval_dataset))
             eval_dataset = eval_dataset.select(range(configs.data_args.max_eval_samples))
-        tokenized_eval_dataset = eval_dataset.map(tokenize, fn_kwargs={"configs": configs, "tokenizer": tokenizer})
+        tokenized_eval_dataset = eval_dataset.map(tokenize_fn, fn_kwargs={"configs": configs, "tokenizer": tokenizer})
 
     if configs.training_args.do_predict:
         if "predict" not in raw_datasets:
@@ -105,7 +143,7 @@ def preprocess(configs, raw_datasets):
         if configs.data_args.max_predict_samples is not None:
             max_predict_samples = min(len(predict_dataset), configs.data_args.max_predict_samples)
             predict_dataset = predict_dataset.select(range(max_predict_samples))
-        tokenized_predict_dataset = predict_dataset.map(tokenize, fn_kwargs={"configs": configs, "tokenizer": tokenizer})
+        tokenized_predict_dataset = predict_dataset.map(tokenize_fn, fn_kwargs={"configs": configs, "tokenizer": tokenizer})
 
     return {
         "train": tokenized_train_dataset,

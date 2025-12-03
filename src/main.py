@@ -2,7 +2,7 @@
 import hydra
 
 from src.common_utils import setup
-from src.data_module.load_data import load_data_from_hf, setup_dataloader
+from src.data_module.load_data import load_data_from_hf, load_gsm8k_compressed, setup_dataloader
 from src.data_module.preprocessing import preprocess
 from src.model_module.load_model import load_model
 from src.train_module.train_utils import create_trainer_args, create_trainer
@@ -14,7 +14,21 @@ def main(configs):
     configs = setup(configs)
 
     """Load the data"""
-    raw_datasets = load_data_from_hf(configs.data_args.dataset_name, configs.data_args.train_dev_test_split_ratio, configs.data_args.seed, cache_dir=configs.data_args.cache_dir)
+    # Check if this is GSM8K compressed dataset
+    if hasattr(configs.data_args, 'dataset_name') and configs.data_args.dataset_name == "gsm8k_compressed":
+        print(f"Loading GSM8K compressed dataset from {configs.data_args.data_path}...")
+        raw_datasets = load_gsm8k_compressed(
+            configs.data_args.data_path,
+            configs.data_args.train_dev_test_split_ratio,
+            configs.training_args.seed
+        )
+    else:
+        raw_datasets = load_data_from_hf(
+            configs.data_args.dataset_name,
+            configs.data_args.train_dev_test_split_ratio,
+            configs.training_args.seed,
+            cache_dir=configs.data_args.cache_dir
+        )
 
     """Preprocess data"""
     tokenized_datasets, tokenizer, data_collator = preprocess(configs, raw_datasets)

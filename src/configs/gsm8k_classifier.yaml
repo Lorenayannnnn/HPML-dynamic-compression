@@ -1,0 +1,66 @@
+# Configuration for training compression classifier on GSM8K data
+# This trains a binary classifier to predict where <COMP> tokens should be placed
+
+data_args:
+  # Dataset configuration
+  dataset_name: "gsm8k_compressed"
+  data_path: "data/gsm8k_compressed_train.json"  # Path to JSON file with <COMP> tokens
+  train_dev_test_split_ratio: [0.8, 0.1, 0.1]
+  cache_dir: null
+
+  # Tokenization
+  max_seq_length: 2048  # GSM8K reasoning can be long
+  pad_to_multiple_of: 8
+  padding_side: "left"
+
+  # Sampling
+  max_train_samples: null  # Use all samples by default
+  max_eval_samples: null
+  max_predict_samples: null
+
+model_args:
+  # Base LLM (frozen during classifier training)
+  model_name_or_path: "unsloth/Meta-Llama-3.1-8B-Instruct"
+  config_name: null
+  tokenizer_name: null
+  compression_token: "<COMP>"
+
+classifier_args:
+  # Classifier head configuration
+  dropout: 0.1
+  hidden_size: 4096  # LLaMA-3.1-8B hidden size (will be auto-detected)
+
+training_args:
+  output_dir: "outputs/classifier"
+
+  do_train: true
+  do_eval: true
+  do_predict: false
+
+  seed: 42
+  num_train_epochs: 3
+  batch_size: 64  # Total batch size (will be split by gradient accumulation)
+  micro_batch_size: 4  # Per-device batch size (reduced for RTX 6000)
+  learning_rate: 5e-5
+  lr_scheduler_type: "cosine"
+  resume_from_checkpoint: null
+
+  evaluation_strategy: "steps"
+  eval_steps: 100
+  save_strategy: "steps"
+  save_steps: 100
+  save_total_limit: 3
+
+  prediction_loss_only: false
+
+  # wandb logging
+  use_wandb: true
+  wandb_usr: null
+  wandb_project: "hpml-dynamic-compression"
+  wandb_run_name: "classifier-gsm8k-llama31"
+  wandb_watch: ""
+  wandb_log_model: ""
+
+hydra:
+  run:
+    dir: ${training_args.output_dir}
