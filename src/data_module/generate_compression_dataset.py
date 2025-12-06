@@ -33,6 +33,7 @@ from openai import OpenAI
 from tqdm import tqdm
 from datasets import load_dataset
 
+from textwrap import dedent
 
 # Prompt for generating compressed reasoning
 COMPRESSION_PROMPT = """Solve this math problem step-by-step. After each logical step or calculation, insert a <COMP> token to mark a "checkpoint" in your reasoning.
@@ -236,23 +237,26 @@ def analyze_compression_data(data: List[Dict]) -> Dict:
 
 
 def main():
+    from dotenv import load_dotenv
+    load_dotenv()
+
     parser = argparse.ArgumentParser(
         description="Generate GSM8K reasoning traces with <COMP> compression tokens.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Generate 500 samples (default)
-  python generate_compression_dataset.py
+        epilog=dedent("""
+        Examples:
+        # Generate 500 samples (default)
+        python generate_compression_dataset.py
 
-  # Generate 1000 samples with custom output
-  python generate_compression_dataset.py --num_samples 1000 --output data/custom.json
+        # Generate 1000 samples with custom output
+        python generate_compression_dataset.py --num_samples 1000 --output data/custom.json
 
-  # Use a different model
-  python generate_compression_dataset.py --model gpt-4
+        # Use a different model
+        python generate_compression_dataset.py --model gpt-4
 
-  # Just analyze existing data
-  python generate_compression_dataset.py --analyze_only --output data/existing.json
-        """
+        # Just analyze existing data
+        python generate_compression_dataset.py --analyze_only --output data/existing.json
+        """)
     )
 
     parser.add_argument(
