@@ -58,9 +58,9 @@ pip install -r Project/HPML-dynamic-compression/requirements.txt
 Generate GSM8K samples with `<COMP>` tokens using GPT-4o-mini:
 
 ```bash
-uv run python Project/HPML-dynamic-compression/src/data_module/generate_compression_dataset.py \
+uv run python src/data_module/generate_compression_dataset.py \
     --num_samples 500 \
-    --output Project/HPML-dynamic-compression/data/gsm8k_compressed_train.json
+    --output data/gsm8k_compressed_train.json
 ```
 
 Script supports resuming (from crashes/rate limiting).
