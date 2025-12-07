@@ -8,7 +8,7 @@ This project extends CCM (Compressed Context Memory) from conversation compressi
 
 ```
 ├── data/
-│   └── gsm8k_compressed_train.json      # 500 GSM8K samples with <COMP> tokens
+│   └── gsm8k_compressed_train.json      # 1000 GSM8K samples with <COMP> tokens
 ├── notebooks/
 │   └── ccm_reasoning.ipynb              # exploration notebook
 ├── outputs/                             # training outputs (checkpoints, logs)
