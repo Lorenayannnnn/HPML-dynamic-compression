@@ -39,18 +39,21 @@ This project extends CCM (Compressed Context Memory) from conversation compressi
 ```
 
 ## Installation
+```bash
+git clone git@github.com:Lorenayannnnn/HPML-dynamic-compression.git
+cd HPML-dynamic-compression
+```
 
 **Using `uv` (recommended):**
 ```bash
-cd COMS6998-HPML
 uv sync
 ```
 
 **Using conda:**
 ```bash
-conda create -n hpml-compress python=3.9
+conda create -n hpml-compress python=3.13
 conda activate hpml-compress
-pip install -r Project/HPML-dynamic-compression/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Phase 1: Data Generation

@@ -8,7 +8,7 @@ from src.model_module.load_model import load_model
 from src.train_module.train_utils import create_trainer_args, create_trainer
 
 
-@hydra.main(config_path="configs", config_name="base_configs", version_base=None)
+@hydra.main(config_path="configs", config_name="gsm8k_classifier", version_base=None)
 def main(configs):
     print("Loading configuration, setting up output directories...")
     configs = setup(configs)
