@@ -36,17 +36,22 @@ class CompressionClassifier(nn.Module):
         logits = self.classifier(hidden_states).squeeze(-1)  # (batch_size, seq_len)
         return logits
     
-    def predict(self, hidden_states, threshold=0.5):
+    def predict(self, hidden_states):
         """
         Generate binary predictions.
         
         Args:
             hidden_states: Tensor of shape (batch_size, seq_len, hidden_size)
-            threshold: Decision threshold for binary classification
-        
+
         Returns:
-            predictions: Boolean tensor of shape (batch_size, seq_len)
+            probs: Tensor of shape (batch_size, seq_len) with probabilities
         """
         logits, _ = self.forward(hidden_states)
         probs = torch.sigmoid(logits)
-        return probs > threshold
+        return probs
+
+    def load_classifier(self, load_path):
+        """Load classifier weights"""
+        self.load_state_dict(
+            torch.load(f"{load_path}/compression_classifier.pt")
+        )

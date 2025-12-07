@@ -2,6 +2,12 @@ import time
 import numpy as np
 import torch
 
+from omegaconf import OmegaConf
+from transformers import AutoConfig
+
+from src.model_module.compression_classifier import CompressionClassifier
+
+
 # -----------------------------
 # Utility functions for inserting COMP tokens
 # -----------------------------
@@ -16,10 +22,10 @@ def insert_static_comp(input_ids: torch.LongTensor, interval: int, comp_id: int)
 
 
 def insert_dynamic_comp(input_ids: torch.LongTensor, hidden_states: torch.FloatTensor,
-                        classifier: torch.nn.Module, threshold: float, comp_id: int):
+                        classifier: CompressionClassifier, threshold: float, comp_id: int):
     if hidden_states.dim() == 3:
         hidden_states = hidden_states.squeeze(0)
-    probs = classifier(hidden_states.to(input_ids.device)).detach().cpu().numpy()
+    probs = classifier.predict(hidden_states.to(input_ids.device)).detach().cpu().numpy()
     toks = input_ids.tolist()
     out = []
     for i, t in enumerate(toks):
@@ -47,7 +53,7 @@ def run_static_baseline(example, model_wrapper, comp_id: int, interval: int):
             "comp_count": (input_ids_with_comp == comp_id).sum().item()}
 
 
-def run_dynamic_classifier(example, model_wrapper, classifier, comp_id: int, threshold: float):
+def run_dynamic_classifier(example, model_wrapper, classifier: CompressionClassifier, comp_id: int, threshold: float):
     input_ids = example["input_ids"].unsqueeze(0).to(model_wrapper.model.device)
     fwd = model_wrapper.forward(input_ids, return_hidden=True)
     hidden = fwd["hidden_states"]
@@ -80,7 +86,7 @@ def accuracy_from_generation(generated_text: str, reference_text: str) -> float:
 # -----------------------------
 # Orchestration
 # -----------------------------
-def evaluate(dataset, model_wrapper, classifier, comp_id: int,
+def evaluate(dataset, model_wrapper, classifier: CompressionClassifier, comp_id: int,
              static_interval: int, cls_threshold: float, max_examples: int = 100):
     results = {"static": [], "dynamic": []}
 
@@ -117,14 +123,30 @@ def evaluate(dataset, model_wrapper, classifier, comp_id: int,
     summary = {"static": summarize(results["static"]), "dynamic": summarize(results["dynamic"])}
     return {"per_example": results, "summary": summary}
 
-# results = evaluate(
-#     dataset=dataset,
-#     model_wrapper=model_wrapper,
-#     classifier=classifier,
-#     comp_id=COMP_TOKEN_ID,
-#     static_interval=128,
-#     cls_threshold=0.5,
-#     max_examples=100
-# )
+def main(CCM_model_path: str, classifier_model_path: str):
+    dataset = None      # TODO
 
-# print("Summary metrics:", results["summary"])
+    CCM_model = None  # TODO: Our baseline / model finetuned on our dataset following the CCM method
+    COMP_TOKEN_ID = None    # TODO
+
+    configs = OmegaConf.load(f"{classifier_model_path}/.hydra/config.yaml")
+    hidden_size = AutoConfig.from_pretrained(configs.model_args.model_name_or_path).hidden_size
+    classifier = CompressionClassifier(hidden_size=hidden_size, dropout=configs.classifier_args.dropout)
+    classifier.load_classifier(classifier_model_path)
+    classifier.eval()
+
+    results = evaluate(
+        dataset=dataset,
+        model_wrapper=CCM_model,
+        classifier=classifier,
+        comp_id=COMP_TOKEN_ID,
+        static_interval=128,
+        cls_threshold=0.5,
+        max_examples=100
+    )
+
+    print("Summary metrics:", results["summary"])
+
+if __name__ == "__main__":
+    # Directory paths for baseline and compression probe models. E.g. outputs/classifier stores .hydra and compression_classifier.pt
+    main(CCM_model_path="outputs/baseline", classifier_model_path="outputs/classifier")
