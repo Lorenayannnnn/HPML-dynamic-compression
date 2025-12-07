@@ -38,7 +38,7 @@ def main(configs):
     model = load_model(configs)
 
     """Set up trainer"""
-    trainer_args = create_trainer_args(configs)
+    trainer_args = create_trainer_args(configs, train_data_size=len(tokenized_datasets["train"]))
 
     trainer = create_trainer(model, tokenizer, data_collator, tokenized_datasets["train"], tokenized_datasets["validation"], trainer_args)
 
@@ -46,12 +46,12 @@ def main(configs):
         print("Start training...")
         trainer.train()
         model.save_pretrained(configs.training_args.output_dir)
-    elif configs.training_args.do_eval:
+    if configs.training_args.do_eval:
         print("Start evaluating...")
         trainer.evaluate()
-    elif configs.training_args.do_predict:
-        print("Start predicting...")
-        trainer.predict()
+    # elif configs.training_args.do_predict:
+    #     print("Start predicting...")
+    #     trainer.predict()
 
     print("yay!")
 

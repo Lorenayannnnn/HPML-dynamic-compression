@@ -7,7 +7,8 @@ data_args:
   max_eval_samples: null
   max_predict_samples: null
 
-  train_dev_test_split_ratio: [0.8, 0.1, 0.1]
+#  train_dev_test_split_ratio: [0.8, 0.1, 0.1]
+  train_dev_test_split_ratio: [0.8, 0.2, 0]
 
   #  Tokenization
   max_seq_length: 1024
@@ -44,6 +45,7 @@ training_args:
   learning_rate: 0.00005
   lr_scheduler_type: "cosine"
   resume_from_checkpoint: null
+  warmup_percentage: 0.1
 
   evaluation_strategy: "steps"
   save_strategy: "steps"
