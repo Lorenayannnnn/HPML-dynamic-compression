@@ -1,6 +1,7 @@
 """Custom wandb integrations"""
 
 import dataclasses
+import json
 import os
 
 import wandb
@@ -19,6 +20,42 @@ from .arguments import Arguments
 
 logger = logging.get_logger(__name__)
 
+# File to store run ID for checkpoint and wandb resumption
+RUN_ID_FILE = "run_id.json"
+
+
+def get_run_id_path(output_dir: str) -> str:
+    """Get path to run ID file."""
+    return os.path.join(output_dir, RUN_ID_FILE)
+
+
+def load_run_id(output_dir: str) -> str | None:
+    """Load existing run ID from output directory if it exists."""
+    run_id_path = get_run_id_path(output_dir)
+    if os.path.exists(run_id_path):
+        try:
+            with open(run_id_path, "r") as f:
+                data = json.load(f)
+                run_id = data.get("run_id")
+                if run_id:
+                    logger.info(f"Found existing run ID: {run_id}")
+                    return run_id
+        except Exception as e:
+            logger.warning(f"Failed to load run ID: {e}")
+    return None
+
+
+def save_run_id(output_dir: str, run_id: str) -> None:
+    """Save run ID to output directory for future resumption."""
+    os.makedirs(output_dir, exist_ok=True)
+    run_id_path = get_run_id_path(output_dir)
+    try:
+        with open(run_id_path, "w") as f:
+            json.dump({"run_id": run_id}, f)
+        logger.info(f"Saved run ID to {run_id_path}")
+    except Exception as e:
+        logger.warning(f"Failed to save run ID: {e}")
+
 
 class CustomWandbCallback(WandbCallback):
 
@@ -30,6 +67,8 @@ class CustomWandbCallback(WandbCallback):
     def setup(self, args, state, model, **kwargs):
         """
         Setup the optional Weights & Biases (*wandb*) integration.
+        Supports resuming from a previous run if checkpoint exists.
+
         One can subclass and override this method to customize the setup if
         needed. Find more information
         [here](https://docs.wandb.ai/integrations/huggingface). You can also
@@ -52,14 +91,34 @@ class CustomWandbCallback(WandbCallback):
         self._initialized = True
         if state.is_world_process_zero:
             if self._wandb.run is None:
-                self._wandb.init(
-                    entity=args.wandb.entity,
-                    project=args.wandb.project,
-                    group=args.wandb.group,
-                    name=args.wandb.name,
-                    config=dataclasses.asdict(args),
-                    settings=wandb.Settings(start_method="fork"),
-                )
+                output_dir = args.training.output_dir
+
+                # Priority: 1) command-line run_id, 2) auto-detected from file
+                run_id_to_resume = getattr(args.wandb, 'run_id', None) or load_run_id(output_dir)
+
+                if run_id_to_resume:
+                    # Resume existing run
+                    logger.info(f"Resuming wandb run: {run_id_to_resume}")
+                    self._wandb.init(
+                        entity=args.wandb.entity,
+                        project=args.wandb.project,
+                        id=run_id_to_resume,
+                        resume="allow",
+                        settings=wandb.Settings(start_method="fork"),
+                    )
+                else:
+                    # Start new run
+                    self._wandb.init(
+                        entity=args.wandb.entity,
+                        project=args.wandb.project,
+                        group=args.wandb.group,
+                        name=args.wandb.name,
+                        config=dataclasses.asdict(args),
+                        settings=wandb.Settings(start_method="fork"),
+                    )
+                    # Save run ID for future resumption
+                    if self._wandb.run is not None:
+                        save_run_id(output_dir, self._wandb.run.id)
 
             # define default x-axis (for latest wandb versions)
             if getattr(self._wandb, "define_metric", None):

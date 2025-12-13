@@ -75,7 +75,30 @@ def detect_last_checkpoint(args):
 @hydra.main(config_path="config", config_name="config", version_base="1.1")
 def main(args: DictConfig) -> None:
     args: Arguments = global_setup(args)
-    last_checkpoint = detect_last_checkpoint(args)  # Auto-detect and resume from checkpoints
+
+    # Check run_id for unified checkpoint + wandb resumption
+    from .callbacks import load_run_id, save_run_id
+    output_dir = args.training.output_dir
+    saved_run_id = load_run_id(output_dir)
+    provided_run_id = getattr(args.wandb, 'run_id', None)
+
+    # Determine if we should start fresh or resume based on run_id
+    if provided_run_id and saved_run_id and provided_run_id == saved_run_id:
+        # Same run_id -> resume from checkpoint
+        logger.info(f"Run ID '{provided_run_id}' matches saved. Resuming.")
+        last_checkpoint = detect_last_checkpoint(args)
+    elif provided_run_id:
+        # New or different run_id -> start fresh
+        if saved_run_id:
+            logger.info(f"New run_id '{provided_run_id}' differs from saved '{saved_run_id}'. Starting fresh.")
+        else:
+            logger.info(f"New run_id '{provided_run_id}'. Starting new run.")
+        last_checkpoint = None
+        save_run_id(output_dir, provided_run_id)
+    else:
+        # No run_id provided (eval only) -> use checkpoint detection
+        last_checkpoint = detect_last_checkpoint(args)
+
     set_seed(args.training.seed)
     JID = int(os.environ.get("SLURM_JOB_ID", 0))
     if JID > 0:

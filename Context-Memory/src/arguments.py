@@ -65,6 +65,8 @@ class WandBArguments:
     name: Optional[str] = field(default="run", metadata={"help": "wandb run name"})
     tag: Optional[str] = field(default="run",
                                metadata={"help": "optional tag to prefix wandb group"})
+    run_id: Optional[str] = field(default=None,
+                                  metadata={"help": "wandb run ID to resume (overrides auto-detection)"})
 
 
 @dataclass

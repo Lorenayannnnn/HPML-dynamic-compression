@@ -101,41 +101,31 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. uv run python src/main.py --config-name gsm8
 Train CCM's conditional LoRA to learn compression at `<COMP>` positions:
 
 ```bash
-cd Context-Memory
+cd Context-Memory && uv sync
 
-# Install dependencies
-uv sync
-
-# Train CCM with LLaMA-3.1-8B-Instruct on GSM8K
 CUDA_VISIBLE_DEVICES=0 uv run python run.py \
     --model llama-3.1-8b-instruct \
     --dataset gsm8k \
     --train \
-    --no_wandb
+    --run_id run1 \
+    --no_wandb  # Remove for actual runs with logging
 ```
 
-**Architecture:**
-- LLaMA-3.1-8B-Instruct with conditional LoRA (r=8)
-- Separate embedding for `<COMP>` tokens
-- CCM-concat attention type for KV cache compression
-- **SDPA/Flash Attention 2**: Configurable attention implementation (`sdpa`, `flash_attention_2`, or `eager`)
+**Key Options:**
+| Flag | Description |
+|------|-------------|
+| `--train` | **Required** - enables training (without it, only evaluation runs) |
+| `--run_id <id>` | **Required** - Run ID for checkpoint + wandb. Same ID = resume, new ID = start fresh |
+| `--no_wandb` | Disable wandb logging (recommended for testing) |
+| `--model <name>` | Model: `llama-3.1-8b-instruct` (default), `llama-3.1-8b`, `llama-2-7b-chat`, `llama-2-7b` |
 
 **Training Config** (`Context-Memory/src/config/gsm8k/llama-8b.yaml`):
 - 1000 steps, batch size 4, gradient accumulation 16 (effective batch = 64)
-- Learning rate 3e-4 with cosine scheduler
-- BF16 training with gradient checkpointing (more stable with attention optimizations)
-- SDPA attention (PyTorch 2.0+ built-in FlashAttention-2 support)
-- Outputs saved to `Context-Memory/result/gsm8k/`
+- BF16 + SDPA attention (PyTorch 2.0+ built-in FlashAttention-2)
+- Conditional LoRA (r=8) on q/k/v/o projections
+- Checkpoints saved every 250 steps to `Context-Memory/result/gsm8k/`
 
-**Supported Models:**
-- `llama-3.1-8b-instruct` (default) - LLaMA 3.1 8B Instruct
-- `llama-3.1-8b` - LLaMA 3.1 8B base
-- `llama-2-7b-chat` - LLaMA 2 7B Chat
-- `llama-2-7b` - LLaMA 2 7B base
-
-**Checkpoint Resumption:**
-
-Training automatically resumes from the last checkpoint if interrupted. Simply re-run the same command above. Checkpoints are saved every 250 steps. To start fresh instead of resuming, add `training.overwrite_output_dir=true` to the command.
+**Resumption:** Use the same `--run_id` to resume both checkpoints and wandb. Use a new `--run_id` to start fresh.
 
 ## Workflow
 

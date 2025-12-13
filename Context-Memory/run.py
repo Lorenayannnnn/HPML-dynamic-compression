@@ -46,6 +46,10 @@ def parse_path(eval_path):
 def run(args):
     base_cmd = f"python -B -m src.train"
 
+    # Require --run_id for training
+    if args.train and not args.run_id:
+        raise ValueError("--run_id is required for training. Use the same ID to resume, or a new ID to start fresh.")
+
     if "debug" not in args.model:
         if args.load_path != '':
             assert args.model in args.load_path, "Check model and load_path"
@@ -195,6 +199,10 @@ def run(args):
     if (args.no_wandb) or not args.train:
         base_cmd = f"{base_cmd} wandb.log=false"
 
+    # Run ID for checkpoint and wandb resumption
+    if args.run_id:
+        base_cmd = f"{base_cmd} wandb.run_id={args.run_id}"
+
     cmd = base_cmd.split()
     print(cmd)
     os.execvp(cmd[0], cmd)
@@ -290,6 +298,7 @@ if __name__ == "__main__":
     parser.add_argument("--generation_max_length", type=int, default=-1)
     parser.add_argument("--eval_rouge", action="store_true", help="Evaluate generation performance")
     parser.add_argument("--no_wandb", action="store_true")
+    parser.add_argument("--run_id", type=str, required=False, default='', help="**Required for training** - Run ID for checkpoint and wandb. Same ID resumes, new ID starts fresh.")
     parser.add_argument("--tag", type=str, default='')
 
     args = parser.parse_args()
