@@ -75,8 +75,7 @@ def detect_last_checkpoint(args):
 @hydra.main(config_path="config", config_name="config", version_base="1.1")
 def main(args: DictConfig) -> None:
     args: Arguments = global_setup(args)
-    last_checkpoint = None
-    # last_checkpoint = detect_last_checkpoint(args)  # Load the existing checkpoints
+    last_checkpoint = detect_last_checkpoint(args)  # Auto-detect and resume from checkpoints
     set_seed(args.training.seed)
     JID = int(os.environ.get("SLURM_JOB_ID", 0))
     if JID > 0:

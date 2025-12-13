@@ -133,6 +133,10 @@ CUDA_VISIBLE_DEVICES=0 uv run python run.py \
 - `llama-2-7b-chat` - LLaMA 2 7B Chat
 - `llama-2-7b` - LLaMA 2 7B base
 
+**Checkpoint Resumption:**
+
+Training automatically resumes from the last checkpoint if interrupted. Simply re-run the same command above. Checkpoints are saved every 250 steps. To start fresh instead of resuming, add `training.overwrite_output_dir=true` to the command.
+
 ## Workflow
 
 1. **Entry point:** [main.py](src/main.py)
