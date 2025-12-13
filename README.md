@@ -96,6 +96,41 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. uv run python src/main.py --config-name gsm8
 - 80/10/10 train/val/test split
 - Outputs saved to `outputs/classifier/`
 
+## Phase 3: CCM Compression Training
+
+Train CCM's conditional LoRA to learn compression at `<COMP>` positions:
+
+```bash
+cd context-memory
+
+# Install dependencies
+uv sync
+
+# Train CCM with LLaMA-3.1-8B-Instruct on GSM8K
+CUDA_VISIBLE_DEVICES=0 uv run python run.py \
+    --model llama-3.1-8b-instruct \
+    --dataset gsm8k \
+    --train \
+    --no_wandb
+```
+
+**Architecture:**
+- LLaMA-3.1-8B-Instruct with conditional LoRA (r=8)
+- Separate embedding for `<COMP>` tokens
+- CCM-concat attention type for KV cache compression
+
+**Training Config** (`context-memory/src/config/gsm8k/llama-8b.yaml`):
+- 1000 steps, batch size 1, gradient accumulation 64
+- Learning rate 3e-4 with cosine scheduler
+- FP16 training with gradient checkpointing
+- Outputs saved to `context-memory/result/gsm8k/`
+
+**Supported Models:**
+- `llama-3.1-8b-instruct` (default) - LLaMA 3.1 8B Instruct
+- `llama-3.1-8b` - LLaMA 3.1 8B base
+- `llama-2-7b-chat` - LLaMA 2 7B Chat
+- `llama-2-7b` - LLaMA 2 7B base
+
 ## Workflow
 
 1. **Entry point:** [main.py](src/main.py)
@@ -120,9 +155,9 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. uv run python src/main.py --config-name gsm8
 - [x] Fix `train_utils.py`: `evaluation_strategy` → `eval_strategy` (transformers API)
 
 ### Phase 3: CCM Compression Training
-- [ ] Add LLaMA-3.1 support to CCM code (`context-memory/`)
-- [ ] Create GSM8K data format for CCM
-- [ ] Train conditional LoRA
+- [x] Add LLaMA-3.1 support to CCM code (`context-memory/`)
+- [x] Create GSM8K data format for CCM
+- [x] Train conditional LoRA
 
 ### Phase 4: Integration & Inference
 - [ ] Create unified inference pipeline (classifier + CCM)
