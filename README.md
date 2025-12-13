@@ -101,7 +101,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. uv run python src/main.py --config-name gsm8
 Train CCM's conditional LoRA to learn compression at `<COMP>` positions:
 
 ```bash
-cd context-memory
+cd Context-Memory
 
 # Install dependencies
 uv sync
@@ -118,12 +118,14 @@ CUDA_VISIBLE_DEVICES=0 uv run python run.py \
 - LLaMA-3.1-8B-Instruct with conditional LoRA (r=8)
 - Separate embedding for `<COMP>` tokens
 - CCM-concat attention type for KV cache compression
+- **SDPA/Flash Attention 2**: Configurable attention implementation (`sdpa`, `flash_attention_2`, or `eager`)
 
-**Training Config** (`context-memory/src/config/gsm8k/llama-8b.yaml`):
-- 1000 steps, batch size 1, gradient accumulation 64
+**Training Config** (`Context-Memory/src/config/gsm8k/llama-8b.yaml`):
+- 1000 steps, batch size 4, gradient accumulation 16 (effective batch = 64)
 - Learning rate 3e-4 with cosine scheduler
-- FP16 training with gradient checkpointing
-- Outputs saved to `context-memory/result/gsm8k/`
+- BF16 training with gradient checkpointing (more stable with attention optimizations)
+- SDPA attention (PyTorch 2.0+ built-in FlashAttention-2 support)
+- Outputs saved to `Context-Memory/result/gsm8k/`
 
 **Supported Models:**
 - `llama-3.1-8b-instruct` (default) - LLaMA 3.1 8B Instruct

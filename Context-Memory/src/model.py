@@ -272,13 +272,18 @@ def load_model(args):
         raise ValueError(f"Model type {model_path} not supported")
 
     if args.model.pretrained:
-        dtype = torch.float16 if args.training.peft else torch.float32
+        dtype = torch.bfloat16 if getattr(args.training, 'bf16', False) else (torch.float16 if args.training.peft else torch.float32)
+
+        # Enable Flash Attention 2 for faster training (requires flash-attn package)
+        attn_impl = getattr(args.model, 'attn_implementation', 'flash_attention_2')
+
         model = model_cls.from_pretrained(
             model_path,
             from_tf=bool(".ckpt" in model_path),
             config=config,
             torch_dtype=dtype,
             device_map='auto',
+            attn_implementation=attn_impl,
             **config_kwargs,
         )
         print(f"Load {model_path}")

@@ -208,6 +208,10 @@ class ModelArguments:
     """
 
     stream: bool = False
+    attn_implementation: str = field(
+        default="flash_attention_2",
+        metadata={"help": "Attention implementation: flash_attention_2, sdpa, or eager"},
+    )
     model_name_or_path: str = field(
         default="google/flan-t5-base",
         metadata={

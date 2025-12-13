@@ -16,6 +16,7 @@ This fork extends CCM from **conversation/dialogue compression** to **reasoning 
 - Added **Grouped Query Attention (GQA)** support (LLaMA 3.1 uses 8 KV heads vs 32 query heads)
 - Updated for **transformers 4.40+** API changes
 - Supports `llama-3.1-8b-instruct`, `llama-3.1-8b`, and backward-compatible with LLaMA 2
+- **SDPA/Flash Attention 2**: Configurable attention implementation (`sdpa`, `flash_attention_2`, or `eager`)
 
 ### 2. GSM8K Reasoning Dataset
 - New data loader for GSM8K samples with `<COMP>` tokens at reasoning checkpoints
@@ -73,8 +74,6 @@ value_states = repeat_kv(value_states, self.num_key_value_groups)
 ## Setup
 
 ```bash
-cd Context-Memory
-
 # Using uv (recommended)
 uv sync
 

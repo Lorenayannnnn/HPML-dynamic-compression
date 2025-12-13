@@ -1,19 +1,27 @@
 # @package _global_
 # Configuration for LLaMA-3.1-8B on GSM8K reasoning compression
-# Optimized for RTX 6000 (48GB)
+# Optimized for RTX 6000 (48GB) with Flash Attention 2
 
 defaults:
   - data
 
+model:
+  # SDPA includes FlashAttention-2 in PyTorch 2.0+ (no extra package needed)
+  attn_implementation: sdpa
+
 training:
-  fp16: true
-  fp16_full_eval: true
+  # Use BF16 instead of FP16 (more stable, better for Flash Attention)
+  bf16: true
+  bf16_full_eval: true
+  fp16: false
+  fp16_full_eval: false
 
-  # Batch size for RTX 6000 (48GB)
-  per_device_train_batch_size: 1
-  gradient_accumulation_steps: 64  # Effective batch = 64
+  # Optimized batch size for RTX 6000 (48GB) with Flash Attention
+  # Increased from 1 to 4 (uses ~35-40GB with FA2)
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 16  # Effective batch = 64 (same as before)
 
-  per_device_eval_batch_size: 2
+  per_device_eval_batch_size: 4
   generation_max_length: 2560
 
   learning_rate: 3.0e-4
@@ -35,6 +43,10 @@ training:
 
   # Memory optimization
   gradient_checkpointing: true
+
+  # DataLoader optimization
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
 
   # Compression settings (online = our method with dynamic <COMP>)
   comp:
