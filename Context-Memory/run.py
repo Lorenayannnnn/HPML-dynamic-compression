@@ -205,11 +205,12 @@ if __name__ == "__main__":
     # Model
     parser.add_argument("--model",
                         "-m",
-                        default="llama-7b",
+                        default="llama-3.1-8b-instruct",
                         choices=[
                             "llama-7b", "llama-13b", "llama-2-7b", "llama-2-7b-chat", "llama-2-13b",
                             "llama-2-13b-chat", "mistral-7b", "mistral-7b-inst", "flan-t5-base",
-                            "flan-t5-large", "llama-debug", "mistral-debug"
+                            "flan-t5-large", "llama-debug", "mistral-debug",
+                            "llama-3.1-8b", "llama-3.1-8b-instruct"  # LLaMA 3.1 models
                         ])
     parser.add_argument("--sepembed",
                         type=str2bool,
@@ -251,7 +252,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset",
                         "-d",
                         default='metaicl',
-                        choices=['unified', 'metaicl', 'dialog', 'soda', 'lamp', 'pretrain'],
+                        choices=['unified', 'metaicl', 'dialog', 'soda', 'lamp', 'pretrain', 'gsm8k'],
                         help="Training/evaluation dataset.")
     parser.add_argument(
         "--train_dataset",

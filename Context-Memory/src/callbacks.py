@@ -9,7 +9,11 @@ try:
 except:
     from transformers import TrainerCallback
     from transformers.integrations import WandbCallback
-from transformers.utils import is_torch_tpu_available, logging
+from transformers.utils import logging
+
+# Compatibility shim: is_torch_tpu_available was removed in transformers 4.41+
+def is_torch_tpu_available():
+    return False
 
 from .arguments import Arguments
 

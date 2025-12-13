@@ -1,0 +1,13 @@
+# @package _global_
+# GSM8K data configuration for reasoning compression
+
+data:
+  dataset_name: gsm8k
+  train_file: null  # Uses default path from path_config if null
+  validation_file: null
+  max_length: 2048
+  max_example_length: 1024
+  k: 0  # No demonstrations for GSM8K (single-problem reasoning)
+  seed_eval: 42
+  max_train_samples: null
+  max_eval_samples: null

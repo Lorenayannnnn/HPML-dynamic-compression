@@ -1,124 +1,152 @@
-# Compressed Context Memory
+# Compressed Context Memory (Modified Fork)
+
+> **Note**: This is a modified fork of [CCM (Compressed Context Memory)](https://github.com/snu-mllab/Context-Memory) by Kim et al. (ICLR 2024), adapted for **reasoning compression on GSM8K** with **LLaMA 3.1** support.
+
 ![main](image/main.png)
 
-[**Paper**](https://janghyun1230.github.io/paper/ccm23.pdf) | [**arXiv**](https://arxiv.org/abs/2312.03414) | [**Project Page**](https://janghyun1230.github.io/memory/)
+**Original Work:** [Paper](https://janghyun1230.github.io/paper/ccm23.pdf) | [arXiv](https://arxiv.org/abs/2312.03414) | [Project Page](https://janghyun1230.github.io/memory/) | [Original Repo](https://github.com/snu-mllab/Context-Memory)
 
-✨ **Main features** of our method:
-- Dynamic updates of **compressed key/value memory** during LLM interactions. 
-- Only requiring a **conditional LoRA for compression**.
-- A **fully parallelized training** strategy for recurrent compression procedures. 
-- Evaluations on diverse applications: conversation, multi-task ICL, and personalization. 
-- [Update 24.02.06] Streaming setting evaluation is available.  
+---
+
+## What's Different in This Fork
+
+This fork extends CCM from **conversation/dialogue compression** to **reasoning compression** for math problem solving (GSM8K). Key modifications:
+
+### 1. LLaMA 3.1 Support
+- Added **Grouped Query Attention (GQA)** support (LLaMA 3.1 uses 8 KV heads vs 32 query heads)
+- Updated for **transformers 4.40+** API changes
+- Supports `llama-3.1-8b-instruct`, `llama-3.1-8b`, and backward-compatible with LLaMA 2
+
+### 2. GSM8K Reasoning Dataset
+- New data loader for GSM8K samples with `<COMP>` tokens at reasoning checkpoints
+- Custom collator that masks `<COMP>` tokens in labels (compression markers, not prediction targets)
+
+### 3. Dynamic Compression (vs Fixed Interval)
+- Original CCM: `<COMP>` tokens at **fixed intervals** (every N tokens)
+- This fork: `<COMP>` tokens at **semantically meaningful positions** (after calculations, conclusions)
+- Works with our learned classifier that predicts WHERE to place `<COMP>` tokens
+
+---
+
+## Changes from Original Repository
+
+### Transformers 4.40+ Compatibility
+
+| Component | Original | Modified |
+|-----------|----------|----------|
+| Attention masks | `_make_causal_mask`, `_expand_mask` | `_prepare_4d_causal_attention_mask` |
+| Rotary embedding init | `LlamaRotaryEmbedding(dim, max_pos, base)` | `LlamaRotaryEmbedding(config=config)` |
+| Rotary embedding forward | `rotary_emb(x, seq_len=...)` | `rotary_emb(x, position_ids)` |
+| MLP init | `LlamaMLP(hidden_size, intermediate_size, act)` | `LlamaMLP(config)` |
+| Checkpointing | `from transformers.modeling_utils import checkpoint` | `from torch.utils.checkpoint import checkpoint` |
+| TPU utils | `is_torch_tpu_available` | Fallback to `is_torch_xla_available` |
+| Auth token | `use_auth_token=` | `token=` |
+
+### GQA (Grouped Query Attention) Support
+
+```python
+# Added to LlamaAttention for LLaMA 3.1
+self.num_key_value_heads = getattr(config, 'num_key_value_heads', self.num_heads)
+self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+
+# K/V projections use fewer heads
+self.k_proj = Linear(..., num_key_value_heads * head_dim)
+self.v_proj = Linear(..., num_key_value_heads * head_dim)
+
+# Expand before attention
+key_states = repeat_kv(key_states, self.num_key_value_groups)
+value_states = repeat_kv(value_states, self.num_key_value_groups)
+```
+
+### Files Modified
+
+| Category | Files |
+|----------|-------|
+| LLaMA Architecture | `src/arch/ccm_llama.py`, `ccm_llama_stream.py`, `gist_llama.py` |
+| T5 Architecture | `src/arch/ccm_t5.py`, `gist_t5.py` |
+| Model Loading | `src/model.py`, `path_config.py` |
+| Training | `src/trainer_seq2seq.py`, `run.py` |
+| GSM8K Support (new) | `src/config/gsm8k/*`, `src/data/gsm8k/*` |
+
+---
 
 ## Setup
-```
-conda create --name ccm python=3.9
-conda activate ccm
+
+```bash
+cd Context-Memory
+
+# Using uv (recommended)
+uv sync
+
+# Or using pip
 pip install -r requirements.txt
 ```
 
-Supported Models: **LLaMA / LLaMA-2-chat / Mistral**
-> [!IMPORTANT]  
-> - In [`./path_config.py`](https://github.com/snu-mllab/Context-Memory/blob/main/path_config.py), please set directory configurations.
-> - To use LLaMA, please convert the LLaMA weights into Hugging Face Transformers format using the [guideline](https://huggingface.co/docs/transformers/main/model_doc/llama).
-> - [Update 24.02.21] We support Mistral models! To use the model, please upgrade `pip install transformers==4.37.2 accelerate==0.27.2`
-> - You can train and test models by using `--model [llama-7b,llama-2-7b-chat, mistral-7b-inst]` flags.
+**Supported Models:**
+- `llama-3.1-8b-instruct` (default) - LLaMA 3.1 8B Instruct
+- `llama-3.1-8b` - LLaMA 3.1 8B base
+- `llama-2-7b-chat` - LLaMA 2 7B Chat
+- `llama-2-7b` - LLaMA 2 7B base
+- `llama-7b`, `llama-13b` - Original LLaMA
+- `mistral-7b`, `mistral-7b-inst` - Mistral
 
-We release datasets and models via gdown (see below). 
-> [!TIP]
-> - When gdown incurs errors, please directly download files from [dataset link](https://drive.google.com/drive/folders/16bG_zCiEL27h5vVL_QN0OW3PH1iQdlf_?usp=drive_link) and [model link](https://drive.google.com/drive/folders/1qutEXBekpUTaE8fJhjKT-5DMzXpN55cx?usp=drive_link) (put model subfolders in SAVEPATH and dataset subfolders in DATAPATH from path_config.py). 
+---
 
-## Demo: Interactive inference with compressed memory
-```
-python download.py --type model --name [unified,pretrain]  # Download adapters
-python inference.py -i -m [llama-7b,llama-2-7b-chat] --eval_name concat_recur
-```
-- **An example of an interactive chat program:**
-  <div style="margin-top: 0px;"></div>
-  <img src="https://github.com/snu-mllab/Context-Memory/blob/main/image/demo.png" align="center" width=55%>
+## Training on GSM8K
 
-- **Testing pre-defined examples**: Run the code without `-i` flag to measure perplexity on the target output and compare generation results. You can modify test examples in [`./src/test_case.py`](https://github.com/snu-mllab/Context-Memory/blob/main/src/test_case.py). 
-  <div style="margin-top: 0px;"></div>
-  <img src="https://github.com/snu-mllab/Context-Memory/blob/main/image/test.png" align="center" width=90%>
-> [!Note]  
-> - In default, download adapters with `--name unified` for llama-7b and `--name pretrain` for llama-2-7b-chat.
-> - To test CCM-merge, set `--eval_name merge_recur`.
-> - [Update 24.01.12] We release a compression adapter for the general purpose which is trained on the mixture of datasets including samples from [RedPajama-v2](https://www.together.ai/blog/redpajama-data-v2) and [LMSYS-Chat-1M](https://huggingface.co/datasets/lmsys/lmsys-chat-1m) (# training samples is 500k). To test the adapter, download `--name pretrain` and set `--dataset pretrain` for inference.py.
+Train CCM's conditional LoRA for reasoning compression:
 
-## Streaming setting
-- To conduct the evaluation of CCM-concat (LLaMA) in a streaming setting with a sliding window, run
-```
-python download.py --type data --name pg19
-python download.py --type model --name pretrain
-python inference.py --stream 
-```
-<img src="https://github.com/snu-mllab/Context-Memory/blob/main/image/stream.png" align="center" width=90%>
+```bash
+# Basic training
+CUDA_VISIBLE_DEVICES=0 uv run python run.py \
+    --model llama-3.1-8b-instruct \
+    --dataset gsm8k \
+    --train
 
+# Without wandb logging
+CUDA_VISIBLE_DEVICES=0 uv run python run.py \
+    --model llama-3.1-8b-instruct \
+    --dataset gsm8k \
+    --train \
+    --no_wandb
+```
 
-## Dataset 
-- We provide tokenized data of [MetaICL](https://github.com/facebookresearch/MetaICL) and [SODA](https://github.com/skywalker023/sodaverse) for LLaMA. Smaller datasets, e.g., DailyDialog, will be downloaded and tokenized automatically during training. 
-- To download tokenized datasets, run
-```
-python download.py --type data --name [metaicl,soda]
-```
-> [!Note]  
-> - In our codes, `--dataset unified` refers to the mixture of MetaICL and SODA. Download both datasets to use this argument. 
-> - To use other datasets, you should make a collator function. Check for [`./src/data`](https://github.com/snu-mllab/Context-Memory/tree/main/src/data).
+**Training Config** (`src/config/gsm8k/llama-8b.yaml`):
+- 1000 steps, batch size 1, gradient accumulation 64
+- Learning rate 3e-4 with cosine scheduler
+- LoRA r=8 on q_proj, k_proj, v_proj, o_proj
+- FP16 training with gradient checkpointing
+- Outputs: `result/gsm8k/llama-3.1-8b-instruct-online-concat_recur/`
 
-## Training
-> [!Important]  
-> - Our experiments basically run on a single A100 80GB within 5~24h. In the case of DailyDialog, which has a smaller context length, we can run on a single RTX 3090 GPU with 24GB memory. 
-> - Set up a [Wandb](https://wandb.ai/) account for logging, and replace the username with yours in the wandb.entity field of [`src/conf/config.yaml`](https://github.com/snu-mllab/Context-Memory/blob/main/src/config/config.yaml).
+---
 
-**Step 1 (optional): Fintuning LLaMA.** We recommend first finetuning the LLaMA pretrained models on a dataset: 
-```
-python run.py --train --dataset [unified,metaicl,dialog,lamp] --model llama-7b \
-    --comp_type no
-```
-- The LoRA adapters will be saved at `{SAVEPATH}/{dataset}/llama-7b-no`. Set SAVEPATH in path_config.py.
-- For aligned models such as **LLaMA-2-chat/Mistral-instruct**, it's okay to skip this step. 
+## Original CCM Features
 
-**Step 2: Training a compression adapter.** 
-```
-python run.py --train --dataset [unified,metaicl,dialog,lamp] --model llama-7b \
-    --load_path llama-7b-no \ 
-    --attn_type [concat_recur,merge_recur] --n_tok [# <COMP> tokens]
-```
-- Default configurations for each dataset can be found in [`./src/config`](https://github.com/snu-mllab/Context-Memory/tree/05d0b542b7d6cc7339c9b13e66d4c15c600efe34/src/config). The arguments provided by the command line will overwrite the default configurations. 
-- If you have skipped step 1, then execute run.py without the `--load_path` flag. 
+The original CCM paper introduced:
+- Dynamic updates of **compressed key/value memory** during LLM interactions
+- **Conditional LoRA** that activates only at compression positions
+- **Fully parallelized training** for recurrent compression procedures
+- Evaluations on conversation, multi-task ICL, and personalization
 
-## Evaluation
-- We release optimized adapters via [Google Drive](https://drive.google.com/drive/folders/1qutEXBekpUTaE8fJhjKT-5DMzXpN55cx?usp=drive_link). To download, run
-```
-python download.py --type model --name [unified,pretrain,metaicl,dialog,lamp]
-```
-- To test models, run
-```
-python run.py --dataset [metaicl,dialog,lamp] --model llama-7b \
-    --load_path llama-7b-no \ 
-    --eval_path [path for compression adapter] \ 
-    --attn_type [concat_recur,merge_recur]
-```
-> [!Note]  
-> - Set `--train_dataset` for cross-dataset evaluation.
->   - Ex) To evaluate a model trained with a unified trainset on DailyDialog testset, set `--train_dataset unified --dataset dialog`. 
-> - The parent directory of load/eval paths is `{SAVEPATH}/{args.train_dataset}`.  
->   - Ex) `--eval_path finetune/llama-7b-no-online-concat_recur-ntok2 --attn_type concat_recur` will evaluate CCM-concat (LLaMA-7B) with two compression tokens.
->   - Be aware to set the correct `--model` and `--attn_type` of the adapter. 
->   - `--n_tok` will be automatically parsed from the eval_path.
-> - For LLaMA-2-chat or Mistral-instruct, we don't need the `--load_path` flag. 
-> - In the case of MetaICL and LaMP, we use --attn_type [concat,merge] (see [L218-223 in run.py](https://github.com/snu-mllab/Context-Memory/blob/05d0b542b7d6cc7339c9b13e66d4c15c600efe34/run.py#L218C3-L218C3)). To aggregate evaluation results on multiple test tasks, run `parse_results_metaicl.py --dataset [unified,metaicl] --folder ['',finetune]`.
+For the original usage (MetaICL, SODA, dialogue), see the [original repository](https://github.com/snu-mllab/Context-Memory).
 
-## Reference
-- This code is created based on the [Gisting repository](https://github.com/jayelm/gisting).
+---
 
 ## Citation
-```
+
+If you use this code, please cite the original CCM paper:
+
+```bibtex
 @inproceedings{
-      kim2024compressed,
-      title={Compressed Context Memory for Online Language Model Interaction},
-      author={Jang-Hyun Kim and Junyoung Yeom and Sangdoo Yun and Hyun Oh Song},
-      booktitle={ICLR},
-      year={2024},
+    kim2024compressed,
+    title={Compressed Context Memory for Online Language Model Interaction},
+    author={Jang-Hyun Kim and Junyoung Yeom and Sangdoo Yun and Hyun Oh Song},
+    booktitle={ICLR},
+    year={2024},
 }
 ```
+
+## Acknowledgments
+
+- Original CCM implementation: [snu-mllab/Context-Memory](https://github.com/snu-mllab/Context-Memory)
+- Based on the [Gisting repository](https://github.com/jayelm/gisting)

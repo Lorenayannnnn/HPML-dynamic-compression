@@ -1,6 +1,6 @@
 from datasets import DatasetDict, load_dataset, concatenate_datasets
 from .utils import nested_select, test_collator
-from . import lamp, metaicl, dialogue
+from . import lamp, metaicl, dialogue, gsm8k
 from .collator import DataCollator_LLAMA
 
 
@@ -185,6 +185,40 @@ def load_dataset_metric_collator(args, model, tokenizer):
         batch = [train_dataset[0]]
         batch += [eval_dataset['validation'][0]]
         print("TEST collator")
+        test_collator(collator, batch, tokenizer, args.is_llama)
+
+    elif args.data.dataset_name == "gsm8k":
+        # GSM8K reasoning compression - <COMP> tokens already embedded in data
+        data_path = getattr(args.data, 'data_path', None)
+        gsm8k_data = gsm8k.data.GSM8KDataset(
+            tokenizer=tokenizer,
+            data_path=data_path,
+            comp_token=comp_token,
+            max_length=args.data.max_length,
+            train_ratio=getattr(args.data, 'train_ratio', 0.8),
+            val_ratio=getattr(args.data, 'val_ratio', 0.1),
+            seed=getattr(args.data, 'seed_data', 42),
+        )
+
+        train_dataset = gsm8k_data.train_dataset
+        eval_dataset = gsm8k_data.eval_dataset
+
+        collator = gsm8k.collator.DataCollatorForGSM8K_LLAMA(
+            gsm8k=gsm8k_data,
+            tokenizer=tokenizer,
+            comp_args=args.training.comp,
+            model=model,
+            comp_token=comp_token,
+            sum_token=sum_token,
+            pad_token=pad_token,
+            max_length=args.data.max_length,
+        )
+
+        # Test collator
+        batch = [train_dataset[0]]
+        if 'validation' in eval_dataset:
+            batch += [eval_dataset['validation'][0]]
+        print("TEST GSM8K collator")
         test_collator(collator, batch, tokenizer, args.is_llama)
 
     else:

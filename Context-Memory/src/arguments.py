@@ -74,7 +74,7 @@ class CompressionTrainingArguments(TrainingArguments):
     okay, and control when _post_init happens.
     """
 
-    comp: CompressionArguments = CompressionArguments()
+    comp: CompressionArguments = field(default_factory=CompressionArguments)
 
     # Change these types to strs so that they typecheck with str configs
     evaluation_strategy: Optional[str] = "no"
@@ -125,6 +125,34 @@ class CompressionTrainingArguments(TrainingArguments):
     fsdp: str = ''
     sharded_ddp: str = ''
     neftune_noise_alpha: Optional[float] = None
+
+    # New fields in transformers 4.40+ that use Union types incompatible with OmegaConf
+    lr_scheduler_kwargs: Optional[dict] = None
+    fsdp_config: Optional[dict] = None
+    accelerator_config: Optional[dict] = None
+    torch_compile_backend: Optional[str] = None
+    torch_compile_mode: Optional[str] = None
+    split_batches: Optional[bool] = None
+    dispatch_batches: Optional[bool] = None
+    batch_eval_metrics: bool = False
+    eval_on_start: bool = False
+    use_liger_kernel: bool = False
+    eval_use_gather_object: bool = False
+    deepspeed: Optional[str] = None
+    gradient_checkpointing_kwargs: Optional[dict] = None
+    label_names: Optional[list] = None
+    logging_nan_inf_filter: bool = True
+    include_tokens_per_second: bool = False
+    include_num_input_tokens_seen: bool = False
+    auto_find_batch_size: bool = False
+    full_determinism: bool = False
+    ray_scope: str = "last"
+    ddp_timeout: int = 1800
+    torch_compile: bool = False
+    average_tokens_across_devices: bool = False
+    model_init_kwargs: Optional[dict] = None
+    optim_target_modules: Optional[list] = None
+    dataloader_prefetch_factor: Optional[int] = None
 
     def __post_init__(self):
         # Don't run post-init until ready to convert to TrainingArgs
@@ -305,11 +333,11 @@ class DataTrainingArguments:
 
 @dataclass
 class Arguments:
-    model: ModelArguments = ModelArguments()
-    data: DataTrainingArguments = DataTrainingArguments()
-    wandb: WandBArguments = WandBArguments()
-    training: CompSeq2SeqTrainingArguments = CompSeq2SeqTrainingArguments("result/dummy")
-    user: Optional[str] = os.environ.get("USER", None)
+    model: ModelArguments = field(default_factory=ModelArguments)
+    data: DataTrainingArguments = field(default_factory=DataTrainingArguments)
+    wandb: WandBArguments = field(default_factory=WandBArguments)
+    training: CompSeq2SeqTrainingArguments = field(default_factory=lambda: CompSeq2SeqTrainingArguments("result/dummy"))
+    user: Optional[str] = field(default_factory=lambda: os.environ.get("USER", None))
 
 
 cs = ConfigStore.instance()

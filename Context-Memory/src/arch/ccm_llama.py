@@ -20,10 +20,11 @@ from transformers.models.llama.modeling_llama import (
     LlamaRMSNorm,
     LlamaMLP,
     LlamaRotaryEmbedding,
-    _make_causal_mask,
-    _expand_mask,
     apply_rotary_pos_emb,
+    repeat_kv,  # For GQA support
 )
+# For transformers 4.40+, mask utilities moved to a separate module
+from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 from transformers.utils import logging
 from .generation_utils import GistGenerationMixin
 
@@ -49,19 +50,24 @@ class LlamaAttention(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
+        # Support GQA (Grouped Query Attention) - use config values like transformers does
+        self.num_key_value_heads = getattr(config, 'num_key_value_heads', self.num_heads)
+        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.head_dim = getattr(config, 'head_dim', self.hidden_size // self.num_heads)
         self.max_position_embeddings = config.max_position_embeddings
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
                 f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
                 f" and `num_heads`: {self.num_heads}).")
-        self.q_proj = LinearMask(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.k_proj = LinearMask(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.v_proj = LinearMask(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.o_proj = LinearMask(self.num_heads * self.head_dim, self.hidden_size, bias=False)
-        self.rotary_emb = LlamaRotaryEmbedding(self.head_dim,
-                                               max_position_embeddings=self.max_position_embeddings)
+        # Use config for bias setting as well
+        attention_bias = getattr(config, 'attention_bias', False)
+        self.q_proj = LinearMask(self.hidden_size, self.num_heads * self.head_dim, bias=attention_bias)
+        self.k_proj = LinearMask(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=attention_bias)
+        self.v_proj = LinearMask(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=attention_bias)
+        self.o_proj = LinearMask(self.num_heads * self.head_dim, self.hidden_size, bias=attention_bias)
+        # Note: In transformers 4.40+, LlamaRotaryEmbedding takes config instead of individual params
+        self.rotary_emb = LlamaRotaryEmbedding(config=config)
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
@@ -83,14 +89,15 @@ class LlamaAttention(nn.Module):
 
         #####################################################
         ##### Modified: Feed-forward with conditional LoRA #####
+        # Use num_key_value_heads for GQA support
         query_states = self.q_proj(hidden_states,
                                    comp_mask=comp_mask).view(bsz, q_len, self.num_heads,
                                                              self.head_dim).transpose(1, 2)
         key_states = self.k_proj(hidden_states,
-                                 comp_mask=comp_mask).view(bsz, q_len, self.num_heads,
+                                 comp_mask=comp_mask).view(bsz, q_len, self.num_key_value_heads,
                                                            self.head_dim).transpose(1, 2)
         value_states = self.v_proj(hidden_states,
-                                   comp_mask=comp_mask).view(bsz, q_len, self.num_heads,
+                                   comp_mask=comp_mask).view(bsz, q_len, self.num_key_value_heads,
                                                              self.head_dim).transpose(1, 2)
         #####################################################
 
@@ -100,11 +107,8 @@ class LlamaAttention(nn.Module):
 
         #####################################################
         ##### Modified: Rotery embedding max length ######
-        embed_len = kv_seq_len
-        if max_id is not None:
-            embed_len = max_id
-
-        cos, sin = self.rotary_emb(value_states, seq_len=embed_len)
+        # Note: In transformers 4.40+, rotary_emb takes (x, position_ids) instead of (x, seq_len=...)
+        cos, sin = self.rotary_emb(value_states, position_ids)
         #####################################################
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin,
@@ -134,6 +138,10 @@ class LlamaAttention(nn.Module):
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
 
         past_key_value = (key_states, value_states) if use_cache else None
+
+        # GQA: repeat KV heads to match query heads
+        key_states = repeat_kv(key_states, self.num_key_value_groups)
+        value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(
             self.head_dim)
@@ -183,11 +191,8 @@ class LlamaDecoderLayer(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.self_attn = LlamaAttention(config=config)
-        self.mlp = LlamaMLP(
-            hidden_size=self.hidden_size,
-            intermediate_size=config.intermediate_size,
-            hidden_act=config.hidden_act,
-        )
+        # Note: In transformers 4.40+, LlamaMLP takes config instead of individual params
+        self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
@@ -318,30 +323,18 @@ class LlamaModelCCM(LlamaPreTrainedModel):
     def set_input_embeddings(self, value):
         self.embed_tokens = value
 
-    # Copied from
-    # transformers.models.bart.modeling_bart.BartDecoder._prepare_decoder_attention_mask
+    # Updated for transformers 4.40+ compatibility
     def _prepare_decoder_attention_mask(self, attention_mask, input_shape, inputs_embeds,
                                         past_key_values_length):
         # create causal mask
         # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-        combined_attention_mask = None
-        if input_shape[-1] > 1:
-            combined_attention_mask = _make_causal_mask(
-                input_shape,
-                inputs_embeds.dtype,
-                device=inputs_embeds.device,
-                past_key_values_length=past_key_values_length,
-            )
-
-        if attention_mask is not None:
-            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            expanded_attn_mask = _expand_mask(attention_mask,
-                                              inputs_embeds.dtype,
-                                              tgt_len=input_shape[-1]).to(inputs_embeds.device)
-            combined_attention_mask = (expanded_attn_mask if combined_attention_mask is None else
-                                       expanded_attn_mask + combined_attention_mask)
-
-        return combined_attention_mask
+        # Uses the new combined mask utility from transformers 4.40+
+        return _prepare_4d_causal_attention_mask(
+            attention_mask,
+            input_shape,
+            inputs_embeds,
+            past_key_values_length,
+        )
 
     def get_comp_sum_mask(self, input_ids):
         """

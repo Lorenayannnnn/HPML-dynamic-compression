@@ -27,8 +27,10 @@ from transformers.models.t5.modeling_t5 import (
     T5LayerNorm,
     T5PreTrainedModel,
     T5Stack,
-    checkpoint,
 )
+# In transformers 4.40+, checkpoint is no longer exported from modeling_t5
+# Use torch.utils.checkpoint.checkpoint directly instead
+from torch.utils.checkpoint import checkpoint
 from transformers.utils import logging
 from .generation_utils import GistGenerationMixin
 

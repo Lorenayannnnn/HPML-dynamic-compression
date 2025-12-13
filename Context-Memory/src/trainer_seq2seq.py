@@ -19,7 +19,11 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import GenerationConfig, Seq2SeqTrainer
 from transformers.debug_utils import DebugOption
-from transformers.deepspeed import deepspeed_init, is_deepspeed_zero3_enabled
+# Compatibility: deepspeed utilities moved in transformers 4.39+
+try:
+    from transformers.deepspeed import deepspeed_init, is_deepspeed_zero3_enabled
+except ImportError:
+    from transformers.integrations.deepspeed import deepspeed_init, is_deepspeed_zero3_enabled
 from transformers.trainer_pt_utils import (
     IterableDatasetShard,
     find_batch_size,
@@ -34,7 +38,16 @@ from transformers.trainer_utils import (
     has_length,
     speed_metrics,
 )
-from transformers.utils import is_torch_tpu_available, logging
+from transformers.utils import logging
+
+# Compatibility: is_torch_tpu_available deprecated in 4.41+, use is_torch_xla_available
+try:
+    from transformers.utils import is_torch_tpu_available
+except ImportError:
+    from transformers.utils import is_torch_xla_available
+    # Wrapper to handle signature difference (is_torch_xla_available has no check_device param)
+    def is_torch_tpu_available(check_device=True):
+        return is_torch_xla_available()
 from .data.lamp.utils import classification_candidates
 
 logger = logging.get_logger(__name__)

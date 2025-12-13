@@ -207,10 +207,11 @@ def load_model(args):
     model_path = args.model.model_name_or_path
 
     ## Config
+    # Note: use_auth_token is deprecated in transformers 4.40+, use 'token' instead
     config_kwargs = {
         "cache_dir": args.model.cache_dir,
         "revision": args.model.model_revision,
-        "use_auth_token": True if args.model.use_auth_token else None,
+        "token": True if args.model.use_auth_token else None,
     }
     if args.model.config_name:
         config = AutoConfig.from_pretrained(args.model.config_name, **config_kwargs)
@@ -227,13 +228,16 @@ def load_model(args):
                                                   use_fast=args.model.use_fast_tokenizer,
                                                   **config_kwargs)
     elif model_path:
-        if "llama" in model_path.lower():
+        # LLaMA 3.1 uses tiktoken-based tokenizer, not SentencePiece
+        # Use AutoTokenizer for LLaMA 3.1+, LlamaTokenizer for older versions
+        if "llama" in model_path.lower() and "3.1" not in model_path and "3-" not in model_path.lower():
             tokenizer = LlamaTokenizer.from_pretrained(model_path,
                                                        use_fast=args.model.use_fast_tokenizer,
                                                        **config_kwargs)
         else:
+            # LLaMA 3.1+ requires slow tokenizer with older transformers
             tokenizer = AutoTokenizer.from_pretrained(model_path,
-                                                      use_fast=args.model.use_fast_tokenizer,
+                                                      use_fast=False,
                                                       **config_kwargs)
         if args.is_llama:
             tokenizer.pad_token = tokenizer.eos_token

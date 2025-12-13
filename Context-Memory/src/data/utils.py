@@ -33,8 +33,11 @@ def test_collator(collator, batch, tokenizer, is_llama):
             print(tokenizer.decode([t for k, t in enumerate(instance) if mask[k]]))
 
             print("\n* Compressed sample: ")
-            mask = model_inputs["attention_mask_comp"][i, 0][-1]
-            print(tokenizer.decode([t for i, t in enumerate(instance) if mask[i]]))
+            if "attention_mask_comp" in model_inputs and model_inputs["attention_mask_comp"] is not None:
+                mask = model_inputs["attention_mask_comp"][i, 0][-1]
+                print(tokenizer.decode([t for i, t in enumerate(instance) if mask[i]]))
+            else:
+                print("(attention_mask_comp not available - using full sequence)")
 
             print("\n* Label: ")
             labels = model_inputs["labels"][i]

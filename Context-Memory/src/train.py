@@ -23,10 +23,11 @@ import sys
 import hydra
 import torch
 from omegaconf.dictconfig import DictConfig
-from transformers import (
-    is_torch_tpu_available,
-    set_seed,
-)
+from transformers import set_seed
+
+# Compatibility shim: is_torch_tpu_available was removed in transformers 4.41+
+def is_torch_tpu_available():
+    return False
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version

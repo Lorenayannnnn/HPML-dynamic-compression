@@ -1,8 +1,9 @@
 import os
 
 ####################
-CACHEDIR = "/storage/shared/janghyun"  # os.environ['TRANSFORMERS_CACHE']  # huggingface model cache_dir (e.g., LLaMA-2)
-LLAMADIR = "/storage/shared/janghyun"  # LLaMA model directory (llama-7b-hf)
+# Use environment variable or default to ~/.cache/huggingface
+CACHEDIR = os.environ.get('TRANSFORMERS_CACHE', os.path.expanduser("~/.cache/huggingface"))
+LLAMADIR = os.environ.get('LLAMA_DIR', os.path.expanduser("~/.cache/huggingface"))  # LLaMA model directory
 DATAPATH = "./dataset"  # tokenized data directory (containing folders e.g. metaicl, soda)
 SAVEPATH = "./result"  # result directory (containing folders of dataset names)
 ####################
@@ -55,6 +56,15 @@ def model_path(model_name):
     elif model_name == "mistral-debug":
         path = "mistralai/Mistral-7B-Instruct-v0.2"
 
+    # LLaMA 3.1 models
+    elif model_name == "llama-3.1-8b-instruct":
+        # Note: unsloth repo has tokenizer loading issues, use official meta-llama
+        # TODO: if this is too slow, use unsloth instead
+        path = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+
+    elif model_name == "llama-3.1-8b":
+        path = "meta-llama/Llama-3.1-8B"
+
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
@@ -66,6 +76,8 @@ def map_config(model_name):
 
     if "debug" in model_name:
         config = "llama-debug"
+    elif is_llama and "8b" in model_name:
+        config = "llama-8b"  # LLaMA 3.1-8B uses similar config to 7B
     elif is_llama and "7b" in model_name:
         config = "llama-7b"
     elif is_llama and "13b" in model_name:
