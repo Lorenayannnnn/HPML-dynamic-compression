@@ -249,6 +249,7 @@ def insert_comp_tokens_at_newlines(json_fn: str = "data/gsm8k_compressed_train.j
         reasoning_with_compression_split_by_newline = reasoning_with_compression.split("\n")
         tmp_reasoning = []
         for segment in reasoning_with_compression_split_by_newline:
+            segment = segment.strip()
             if segment != "":
                 if segment.endswith("<COMP>"):
                     tmp_reasoning.append(f"{segment}\n")
