@@ -235,10 +235,10 @@ def analyze_compression_data(data: List[Dict]) -> Dict:
         "distribution": dict(dist)
     }
 
-def insert_comp_tokens_at_newlines(json_fn: str = "data/gsm8k_compressed_train.json",
-                                   output_path: str = "data/gsm8k_compressed_train_with_comp_at_newline.json") -> None:
+def insert_comp_tokens_at_newlines(json_fn: str = "data/gsm8k_wo_newline.json",
+                                   output_path: str = "data/gsm8k_compressed_train_with_comp_after_newline.json") -> None:
     """
-    Insert <COMP> tokens before non-consecutive newline char and after non <COMP> words in the reasoning traces.
+    Insert <COMP> tokens AFTER (consecutive) newline char
     """
     new_lines = []
     with open(json_fn, "r") as f:
@@ -246,18 +246,9 @@ def insert_comp_tokens_at_newlines(json_fn: str = "data/gsm8k_compressed_train.j
     print(f"Number of lines in {json_fn}: {len(data)}")
     for line in data:
         reasoning_with_compression = line["reasoning_with_compression"]
-        reasoning_with_compression_split_by_newline = reasoning_with_compression.split("\n")
-        tmp_reasoning = []
-        for segment in reasoning_with_compression_split_by_newline:
-            segment = segment.strip()
-            if segment != "":
-                if segment.endswith("<COMP>"):
-                    tmp_reasoning.append(f"{segment}\n")
-                else:
-                    tmp_reasoning.append(f"{segment} <COMP>\n")
-            else:
-                tmp_reasoning.append("\n")
-        line["reasoning_with_compression"] = "".join(tmp_reasoning).strip()
+        # Insert <COMP> after each \n or \n\n
+        reasoning_with_compression = re.sub(r'(\n\n|\n)', r'\1<COMP>', reasoning_with_compression)
+        line["reasoning_with_compression"] = reasoning_with_compression
         new_lines.append(line)
     with open(output_path, "w") as f:
         json.dump(new_lines, f, indent=2)
