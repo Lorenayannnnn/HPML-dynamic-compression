@@ -24,6 +24,7 @@ Example usage:
 
 import os
 import json
+import re
 import time
 import argparse
 from collections import Counter
