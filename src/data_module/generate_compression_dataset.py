@@ -235,6 +235,32 @@ def analyze_compression_data(data: List[Dict]) -> Dict:
         "distribution": dict(dist)
     }
 
+def insert_comp_tokens_at_newlines(json_fn: str = "data/gsm8k_compressed_train.json",
+                                   output_path: str = "data/gsm8k_compressed_train_with_comp_at_newline.json") -> None:
+    """
+    Insert <COMP> tokens before non-consecutive newline char and after non <COMP> words in the reasoning traces.
+    """
+    new_lines = []
+    with open(json_fn, "r") as f:
+        data = json.load(f)
+    print(f"Number of lines in {json_fn}: {len(data)}")
+    for line in data:
+        reasoning_with_compression = line["reasoning_with_compression"]
+        reasoning_with_compression_split_by_newline = reasoning_with_compression.split("\n")
+        tmp_reasoning = []
+        for segment in reasoning_with_compression_split_by_newline:
+            if segment != "":
+                if segment.endswith("<COMP>"):
+                    tmp_reasoning.append(f"{segment}\n")
+                else:
+                    tmp_reasoning.append(f"{segment} <COMP>\n")
+            else:
+                tmp_reasoning.append("\n")
+        line["reasoning_with_compression"] = "".join(tmp_reasoning).strip()
+        new_lines.append(line)
+    with open(output_path, "w") as f:
+        json.dump(new_lines, f, indent=2)
+
 
 def main():
     from dotenv import load_dotenv
