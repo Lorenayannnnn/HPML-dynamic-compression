@@ -22,7 +22,7 @@ defaults:
 
 wandb:
   log: true
-  entity: ${user}  # Change this to your wandb username.
+  entity: null  # null = use logged-in wandb account; or set to your username
   project: ccm
   group: ${basename:${data.dataset_name}}/${basename:${model.model_name_or_path}}-${training.comp.comp_type}-ntok${training.comp.num_comp_tokens}
   name: ${basename:${model.model_name_or_path}}-${wandb.tag}
@@ -51,7 +51,7 @@ training:
 
   # Save/eval every 1000 steps and track best model
   overwrite_output_dir: false  # Resume training from checkpoint if it exists.
-  evaluation_strategy: steps
+  eval_strategy: steps         # eval_strategy (not evaluation_strategy) for transformers 4.40+
   save_strategy: steps
   eval_steps: 1000
   save_steps: 1000

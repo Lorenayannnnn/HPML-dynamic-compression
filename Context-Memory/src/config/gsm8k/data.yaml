@@ -1,13 +1,28 @@
 # @package _global_
 # GSM8K data configuration for reasoning compression
+# ALL GSM8K config should be here - not hardcoded in Python
 
 data:
   dataset_name: gsm8k
-  train_file: null  # Uses default path from path_config if null
-  validation_file: null
+
+  # Data path (relative to Context-Memory/)
+  data_path: ../data/gsm8k_compressed_train.json
+
+  # Sequence limits
   max_length: 2048
   max_example_length: 1024
-  k: 0  # No demonstrations for GSM8K (single-problem reasoning)
+
+  # Train/val split (no test - real eval on GSM8K test set in Phase 5)
+  train_ratio: 0.9
+  val_ratio: 0.1
+  seed_data: 42
+
+  # GSM8K doesn't use k-shot demonstrations
+  k: 0
+
+  # Evaluation seed
   seed_eval: 42
+
+  # Optional sample limits (null = use all)
   max_train_samples: null
   max_eval_samples: null
