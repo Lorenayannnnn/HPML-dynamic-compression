@@ -25,10 +25,10 @@ import torch.nn.functional as F
 from transformers.pytorch_utils import Conv1D
 
 from peft.import_utils import is_bnb_available
+from peft import PeftConfig  # PeftConfig moved to top level in newer peft versions
 from peft.utils import (
     TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING,
     ModulesToSaveWrapper,
-    PeftConfig,
     PeftType,
     _freeze_adapter,
     _get_submodules,

@@ -7,34 +7,37 @@ already placed at natural reasoning checkpoints within each problem's solution.
 
 import os
 import json
-import torch
 import numpy as np
-from datasets import Dataset, DatasetDict
+from datasets import Dataset
 from collections import defaultdict
 
 
 class GSM8KDataset:
-    """Dataset class for GSM8K with embedded <COMP> tokens for reasoning compression."""
+    """Dataset class for GSM8K with embedded <COMP> tokens for reasoning compression.
+
+    All config comes from YAML (can be overridden via Hydra CLI).
+    No hardcoded defaults here - see config/gsm8k/data.yaml for defaults.
+    """
 
     def __init__(
         self,
         tokenizer,
-        data_path: str = None,
-        comp_token=None,
-        max_length: int = 2048,
-        train_ratio: float = 0.8,
-        val_ratio: float = 0.1,
-        seed: int = 42,
+        data_path: str,
+        comp_token,
+        max_length: int,
+        train_ratio: float,
+        val_ratio: float,
+        seed: int,
     ):
         """
         Args:
             tokenizer: HuggingFace tokenizer
-            data_path: Path to gsm8k_compressed_train.json
+            data_path: Path to gsm8k_compressed_train.json (from config)
             comp_token: Compression token ID(s)
-            max_length: Maximum sequence length
-            train_ratio: Fraction for training
-            val_ratio: Fraction for validation (rest is test)
-            seed: Random seed for splitting
+            max_length: Maximum sequence length (from config)
+            train_ratio: Fraction for training (from config)
+            val_ratio: Fraction for validation (from config)
+            seed: Random seed for splitting (from config)
         """
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -48,31 +51,21 @@ class GSM8KDataset:
             self.comp_token = [self.comp_token]
 
         # Load data
-        if data_path is None:
-            # Default path relative to this file (src/data/gsm8k/data.py)
-            # Goes 5 levels up to Project dir where gsm8k_compressed_train.json lives
-            data_path = os.path.join(
-                os.path.dirname(__file__),
-                "../../../../../gsm8k_compressed_train.json"
-            )
-
         self.raw_data = self._load_json(data_path)
         print(f"Loaded {len(self.raw_data)} GSM8K samples from {data_path}")
 
-        # Tokenize and split
+        # Tokenize and split (90/10 train/val, no test - real eval on GSM8K test set)
         self.tokenized_data = self._tokenize_all(self.raw_data)
-        self.train_data, self.val_data, self.test_data = self._split_data(
+        self.train_data, self.val_data = self._split_data(
             self.tokenized_data, train_ratio, val_ratio, seed
         )
 
         # Create HuggingFace datasets
-        self.train_dataset = Dataset.from_dict(self._to_dict(self.train_data), split='train')
-        self.eval_dataset = DatasetDict({
-            'validation': Dataset.from_dict(self._to_dict(self.val_data), split='validation'),
-            'test': Dataset.from_dict(self._to_dict(self.test_data), split='test'),
-        })
+        # Return plain Datasets (not DatasetDict) for trainer compatibility
+        self.train_dataset = Dataset.from_dict(self._to_dict(self.train_data))
+        self.eval_dataset = Dataset.from_dict(self._to_dict(self.val_data))
 
-        print(f"Train: {len(self.train_dataset)}, Val: {len(self.eval_dataset['validation'])}, Test: {len(self.eval_dataset['test'])}")
+        print(f"Train: {len(self.train_dataset)}, Val: {len(self.eval_dataset)}")
 
     def _load_json(self, path: str) -> list:
         """Load JSON data file."""
@@ -139,22 +132,19 @@ class GSM8KDataset:
         return tokenized
 
     def _split_data(self, data: list, train_ratio: float, val_ratio: float, seed: int):
-        """Split data into train/val/test."""
+        """Split data into train/val (no test - real eval on GSM8K test set in Phase 5)."""
         np.random.seed(seed)
         indices = np.random.permutation(len(data))
 
         n_train = int(len(data) * train_ratio)
-        n_val = int(len(data) * val_ratio)
 
         train_idx = indices[:n_train]
-        val_idx = indices[n_train:n_train + n_val]
-        test_idx = indices[n_train + n_val:]
+        val_idx = indices[n_train:]  # Rest goes to validation
 
         train_data = [data[i] for i in train_idx]
         val_data = [data[i] for i in val_idx]
-        test_data = [data[i] for i in test_idx]
 
-        return train_data, val_data, test_data
+        return train_data, val_data
 
     def _to_dict(self, data: list) -> dict:
         """Convert list of dicts to dict of lists for HuggingFace Dataset."""
@@ -169,7 +159,7 @@ class GSM8KDataset:
         if split == 'train':
             sample = self.train_dataset[idx]
         else:
-            sample = self.eval_dataset[split][idx]
+            sample = self.eval_dataset[idx]
 
         decoded = self.tokenizer.decode(sample['input_ids'])
         return {
@@ -190,11 +180,15 @@ if __name__ == '__main__':
     tokenizer.add_special_tokens({"additional_special_tokens": ["<COMP>"]})
     comp_token = tokenizer.convert_tokens_to_ids("<COMP>")
 
-    # Load dataset
+    # Load dataset with explicit config values (matching data.yaml defaults)
     dataset = GSM8KDataset(
         tokenizer=tokenizer,
+        data_path=os.path.join(os.path.dirname(__file__), "../../../../data/gsm8k_compressed_train.json"),
         comp_token=[comp_token],
         max_length=2048,
+        train_ratio=0.9,
+        val_ratio=0.1,
+        seed=42,
     )
 
     # Show sample

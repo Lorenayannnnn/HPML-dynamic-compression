@@ -36,19 +36,32 @@ from peft.tuners import (
     PromptEncoder,
 )
 from .lora import LoraModel
+# PeftConfig and PromptLearningConfig moved to top level in newer peft versions
+from peft import PeftConfig, PromptLearningConfig
 from peft.utils import (
     TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING,
-    WEIGHTS_NAME,
-    PeftConfig,
     PeftType,
-    PromptLearningConfig,
     TaskType,
     _set_adapter,
     _set_trainable,
     get_peft_model_state_dict,
     set_peft_model_state_dict,
-    shift_tokens_right,
 )
+# WEIGHTS_NAME and shift_tokens_right may have moved - check if needed
+try:
+    from peft.utils import WEIGHTS_NAME
+except ImportError:
+    WEIGHTS_NAME = "adapter_model.bin"
+try:
+    from peft.utils import shift_tokens_right
+except ImportError:
+    # Define fallback if not available
+    def shift_tokens_right(input_ids, pad_token_id, decoder_start_token_id):
+        shifted_input_ids = input_ids.new_zeros(input_ids.shape)
+        shifted_input_ids[:, 1:] = input_ids[:, :-1].clone()
+        shifted_input_ids[:, 0] = decoder_start_token_id
+        shifted_input_ids.masked_fill_(shifted_input_ids == -100, pad_token_id)
+        return shifted_input_ids
 
 PEFT_TYPE_TO_MODEL_MAPPING = {
     PeftType.LORA: LoraModel,
