@@ -79,7 +79,9 @@ class CompressionTrainingArguments(TrainingArguments):
     comp: CompressionArguments = field(default_factory=CompressionArguments)
 
     # Change these types to strs so that they typecheck with str configs
-    evaluation_strategy: Optional[str] = "no"
+    # Note: eval_strategy must match save_strategy when load_best_model_at_end=True
+    # (evaluation_strategy is deprecated in transformers 4.40+, use eval_strategy)
+    eval_strategy: Optional[str] = "steps"
     lr_scheduler_type: Optional[str] = "linear"
     logging_strategy: Optional[str] = "steps"
     save_strategy: Optional[str] = "steps"
@@ -127,6 +129,9 @@ class CompressionTrainingArguments(TrainingArguments):
     fsdp: str = ''
     sharded_ddp: str = ''
     neftune_noise_alpha: Optional[float] = None
+
+    # Early stopping (used by EarlyStoppingCallback, not a native HF TrainingArguments field)
+    early_stopping_patience: Optional[int] = None
 
     # New fields in transformers 4.40+ that use Union types incompatible with OmegaConf
     lr_scheduler_kwargs: Optional[dict] = None
@@ -317,6 +322,15 @@ class DataTrainingArguments:
     )
     seed_eval: int = 100  # MetaICL evaluation data seed
 
+    # GSM8K-specific fields (added for reasoning compression)
+    data_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to the training data file (GSM8K compressed JSON)"}
+    )
+    train_ratio: float = field(default=0.9, metadata={"help": "Fraction for training split"})
+    val_ratio: float = field(default=0.1, metadata={"help": "Fraction for validation split"})
+    seed_data: int = field(default=42, metadata={"help": "Random seed for data splitting"})
+
     def __post_init__(self):
         if (self.dataset_name is None and self.train_file is None and self.validation_file is None):
             raise ValueError("Need either a dataset name or a training/validation file.")
@@ -365,6 +379,11 @@ def global_setup(args: DictConfig) -> Arguments:
         datefmt="%m/%d/%Y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
+
+    # Debug: print eval_strategy before conversion
+    print(f"[DEBUG] Before to_object: eval_strategy={args.training.eval_strategy}, "
+          f"save_strategy={args.training.save_strategy}, do_eval={args.training.do_eval}, "
+          f"load_best_model_at_end={args.training.load_best_model_at_end}")
 
     # Convert args to the actual dataclass object, to enable methods.  Need to
     # delete _n_gpu, a property that TrainingArgs init doesn't expect.

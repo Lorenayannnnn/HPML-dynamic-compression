@@ -24,6 +24,7 @@ import hydra
 import torch
 from omegaconf.dictconfig import DictConfig
 from transformers import set_seed
+from transformers.trainer_callback import EarlyStoppingCallback
 
 # Compatibility shim: is_torch_tpu_available was removed in transformers 4.41+
 def is_torch_tpu_available():
@@ -134,10 +135,16 @@ def main(args: DictConfig) -> None:
     if args.training.evaluate_before_train:
         custom_callbacks.append(EvaluateFirstStepCallback())
 
-    # Fix: due to Transformers version confiction
+    # Early stopping (requires load_best_model_at_end=True and eval during training)
+    early_stopping_patience = getattr(args.training, 'early_stopping_patience', None)
+    if early_stopping_patience and early_stopping_patience > 0:
+        logger.info(f"Enabling early stopping with patience={early_stopping_patience}")
+        custom_callbacks.append(EarlyStoppingCallback(early_stopping_patience=early_stopping_patience))
+
+    # Fix: due to Transformers version conflict
     if "mistral" in args.model.model_name_or_path:
         args.training.do_eval = False
-        args.training.evaluation_strategy = "no"
+        args.training.eval_strategy = "no"
 
     trainer = CompSeq2SeqTrainer(
         model=model,

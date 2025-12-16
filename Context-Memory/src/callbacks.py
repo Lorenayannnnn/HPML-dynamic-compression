@@ -96,25 +96,29 @@ class CustomWandbCallback(WandbCallback):
                 # Priority: 1) command-line run_id, 2) auto-detected from file
                 run_id_to_resume = getattr(args.wandb, 'run_id', None) or load_run_id(output_dir)
 
+                # Build init kwargs, omitting None values
+                init_kwargs = {
+                    "project": args.wandb.project,
+                    "settings": wandb.Settings(start_method="fork"),
+                }
+                if args.wandb.entity:  # Only include entity if explicitly set
+                    init_kwargs["entity"] = args.wandb.entity
+
                 if run_id_to_resume:
                     # Resume existing run
                     logger.info(f"Resuming wandb run: {run_id_to_resume}")
                     self._wandb.init(
-                        entity=args.wandb.entity,
-                        project=args.wandb.project,
+                        **init_kwargs,
                         id=run_id_to_resume,
                         resume="allow",
-                        settings=wandb.Settings(start_method="fork"),
                     )
                 else:
                     # Start new run
                     self._wandb.init(
-                        entity=args.wandb.entity,
-                        project=args.wandb.project,
+                        **init_kwargs,
                         group=args.wandb.group,
                         name=args.wandb.name,
                         config=dataclasses.asdict(args),
-                        settings=wandb.Settings(start_method="fork"),
                     )
                     # Save run ID for future resumption
                     if self._wandb.run is not None:

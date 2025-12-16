@@ -419,9 +419,14 @@ class LlamaModelCCM(LlamaPreTrainedModel):
 
         past_key_values_length = 0
         seq_length_with_past = seq_length
-        if past_key_values is not None:
-            past_key_values_length = past_key_values[0][0].shape[2]
-            seq_length_with_past = seq_length_with_past + past_key_values_length
+        # Handle newer transformers versions that may pass empty/None past_key_values
+        if past_key_values is not None and len(past_key_values) > 0:
+            if past_key_values[0] is not None and past_key_values[0][0] is not None:
+                past_key_values_length = past_key_values[0][0].shape[2]
+                seq_length_with_past = seq_length_with_past + past_key_values_length
+            else:
+                # past_key_values exists but is empty/None - treat as no cache
+                past_key_values = None
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
