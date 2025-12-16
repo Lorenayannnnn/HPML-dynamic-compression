@@ -113,7 +113,9 @@ def run(args):
         st = args.max_steps
         args.tag += f"_{st}"
         base_cmd = f"{base_cmd} training.max_steps={st}"
+        # Set save/eval steps and ensure eval_strategy matches save_strategy
         base_cmd = f"{base_cmd} training.save_steps={st//4} training.eval_steps={st//2}"
+        base_cmd = f"{base_cmd} training.eval_strategy=steps training.save_strategy=steps"
 
     ## Training config
     if args.lr > 0:

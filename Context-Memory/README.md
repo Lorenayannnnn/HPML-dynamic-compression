@@ -93,29 +93,23 @@ pip install -r requirements.txt
 
 ## Training on GSM8K
 
-Train CCM's conditional LoRA for reasoning compression:
-
 ```bash
-# Basic training
 CUDA_VISIBLE_DEVICES=0 uv run python run.py \
-    --model llama-3.1-8b-instruct \
-    --dataset gsm8k \
-    --train
-
-# Without wandb logging
-CUDA_VISIBLE_DEVICES=0 uv run python run.py \
-    --model llama-3.1-8b-instruct \
-    --dataset gsm8k \
-    --train \
-    --no_wandb
+    --model llama-3.1-8b-instruct \  # Model to use
+    --dataset gsm8k \                 # Dataset (gsm8k, metaicl, soda, etc.)
+    --train \                         # Enable training mode
+    --run_id my_run_v1 \              # Run ID for checkpoint/wandb resume (same ID = resume)
+    --no_wandb                        # Disable wandb logging (remove for wandb)
 ```
 
-**Training Config** (`src/config/gsm8k/llama-8b.yaml`):
-- 1000 steps, batch size 1, gradient accumulation 64
+**Override config via CLI** (Hydra): `training.max_steps=500`, `data.train_ratio=0.8`, etc.
+
+**Training Config** (`src/config/gsm8k/data.yaml` + `llama-8b.yaml`):
 - Learning rate 3e-4 with cosine scheduler
 - LoRA r=8 on q_proj, k_proj, v_proj, o_proj
-- FP16 training with gradient checkpointing
-- Outputs: `result/gsm8k/llama-3.1-8b-instruct-online-concat_recur/`
+- BF16 training with gradient checkpointing
+- Early stopping (patience=3) with best model checkpointing
+- Outputs: `result/gsm8k/`
 
 ---
 
