@@ -39,8 +39,13 @@ training:
 
   # === Evaluation & Early Stopping ===
   do_eval: true
+  predict_with_generate: false   # Disable generation during eval (loss-only, much faster)
+  prediction_loss_only: true     # Don't accumulate logits during eval (saves memory)
+  # NOTE: Generation during eval crashes due to attention mask bug in ccm_llama.py:441
+  # The assertion `attention_mask.shape[-1] == seq_length_with_past` fails during KV-cache generation.
+  # To fix: replace assertion with adaptive mask resizing. See git history for details.
   eval_strategy: steps           # Must match save_strategy for load_best_model_at_end
-  eval_steps: 25                 # Eval every 25 steps (~15 min)
+  eval_steps: 25                 # Eval every 25 steps
   load_best_model_at_end: true
   metric_for_best_model: eval_loss
   greater_is_better: false       # For loss, lower is better
