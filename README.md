@@ -127,6 +127,23 @@ CUDA_VISIBLE_DEVICES=0 uv run python run.py \
 
 **Resumption:** Use the same `--run_id` to resume both checkpoints and wandb. Use a new `--run_id` to start fresh.
 
+## Phase 4: Evaluation
+
+Evaluation is performed on the GSM8K test set using **online generation with KV cache compression**.
+
+To run **dynamic classifier-based compression (OURS)**:
+```bash
+uv run python src/analysis_module/eval_compression.py
+```
+
+To run the static baseline (newline-based <COMP> insertion):
+```bash
+uv run python src/analysis_module/eval_compression.py --do_baseline
+```
+
+All paths (models, classifier, dataset) and generation settings use default values defined in the script.
+The script reports accuracy, number of <COMP> tokens, estimated KV cache size, and latency, averaged over the test set.
+
 ## Workflow
 
 1. **Entry point:** [main.py](src/main.py)
