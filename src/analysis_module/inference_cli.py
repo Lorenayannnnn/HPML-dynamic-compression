@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Generator, Tuple, Any
 import importlib.util
 
+from src.model_module.ccm_llama import LlamaForCausalLM_CCM
+
 # Add project root to path FIRST (support both script execution and module execution)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Also consider current working directory
@@ -76,11 +78,9 @@ _orig_src_module = sys.modules.get('src', None)
 sys.path.insert(0, CCM_PATH)
 
 # Import CCM modules - this will use CCM's 'src' package
-from src.arch.ccm_llama import LlamaForCausalLM_CCM
-from src.utils import extract_comp_results, SeparatedEmbedding
-from src.data.mask import get_comp_attn_mask_concat_recur
-from src.model import load_lora_weight
-from src import peft_custom as ccm_peft_custom
+from src.model_module.utils import extract_comp_results, SeparatedEmbedding, load_lora_weight
+from src.model_module.mask import get_comp_attn_mask_concat_recur
+from src.model_module import peft_custom as ccm_peft_custom
 
 # Note: We leave CCM_PATH in sys.path because CCM modules need it for their internal imports
 # The key is that we imported our CompressionClassifier BEFORE adding CCM_PATH

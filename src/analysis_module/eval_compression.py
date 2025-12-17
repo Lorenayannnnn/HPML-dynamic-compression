@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from sqlite3 import adapt
 
+from src.model_module.peft_loader import load_peft_model
+
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -16,7 +18,6 @@ import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from model_module.ccm_llama import LlamaForCausalLM_CCM
 from model_module.compression_classifier import CompressionClassifier
-from model_module.peft_loader import load_peft_model, get_comp_and_newline_tokens
 from analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
 import json
 import time
@@ -184,6 +185,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
             dynamic_kv_cache = estimate_kv_cache(dynamic_gen_ids.shape[1], model)
 
             dynamic_text = tokenizer.decode(dynamic_gen_ids[0], skip_special_tokens=False)
+            # print(f"Sample {i+1} Generated Text:\n{dynamic_text}\n")
             dynamic_acc = verify_gsm8k_answer(gt_answer, dynamic_text)
 
             return_results.append({
@@ -267,11 +269,36 @@ def compare_models(baseline_output_fn, dynamic_output_fn):
         )
 
 
+def get_comp_and_newline_tokens(tokenizer) -> tuple:
+    """
+    Extract COMP token ID and newline token IDs from tokenizer.
+
+    Args:
+        tokenizer: HuggingFace tokenizer
+
+    Returns:
+        tuple: (comp_token_id, newline_token_id_list)
+    """
+    # Get COMP0 token
+    if '<COMP0>' not in tokenizer.get_vocab():
+        raise ValueError('Tokenizer vocabulary does not contain <COMP0>.')
+    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP0>')
+
+    # Get newline tokens
+    newline_token_id_list = [
+        tokenizer.encode('\n', add_special_tokens=False)[0],
+        tokenizer.encode('\n\n', add_special_tokens=False)[0]
+    ]
+
+    return comp_token_id, newline_token_id_list
+
+
 def main(args):
     # Load data
     with open(args.test_dataset) as f:
         test_data = json.load(f)
 
+    dtype = torch.float16
     # Load model and tokenizer (PEFT adapter)
     OURS_model_path = Path(args.OURS_model).resolve()
     assert OURS_model_path.exists(), f"Model path does not exist: {OURS_model_path}"
@@ -290,8 +317,8 @@ def main(args):
 
     # Load base model (Llama 3.1 8B Instruct)
     base_model_id = "meta-llama/Llama-3.1-8B-Instruct"
-    dtype = torch.float16 if args.device == 'cuda' else torch.float32
-    
+    # dtype = torch.float16 if args.device == 'cuda' else torch.float32
+
     if args.do_baseline:
         print(f"\nLoading baseline model with PEFT adapter...")
         baseline_model, _ = load_peft_model(
@@ -317,15 +344,15 @@ def main(args):
             base_model_id=base_model_id,
             adapter_path=str(OURS_model_path),
             device=args.device,
-            dtype=dtype
+            # dtype=dtype
         )
-        
+
         # Load classifier
         print(f"Loading classifier from {args.classifier_path}...")
         classifier = CompressionClassifier(hidden_size=model.config.hidden_size, dropout=0.1)
-        classifier.load_state_dict(torch.load(args.classifier_path, map_location='cpu'))
+        classifier.load_state_dict(torch.load(args.classifier_path))
         classifier.eval()
-        classifier = classifier.to(args.device)
+        classifier = classifier.to(args.device).to(dtype)
 
         print("\nRunning DYNAMIC classifier evaluation...")
         results = evaluate(
