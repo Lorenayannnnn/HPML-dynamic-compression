@@ -242,18 +242,29 @@ if __name__ == "__main__":
     with open(args.test_dataset) as f:
         test_data = json.load(f)
     
-    # Load model and tokenizer
-    base_model = "meta-llama/Llama-3.1-8B-Instruct"
-
-    print(f"Loading base model {base_model} and applying PEFT adapter {args.model}...")
-    tokenizer = AutoTokenizer.from_pretrained(base_model, use_auth_token=True, trust_remote_code=True)
+    # Load model and tokenizer (PEFT adapter)
+    model_path = Path(args.model).resolve()
+    assert model_path.exists(), f"Model path does not exist: {model_path}"
+    
+    print(f"Loading PEFT adapter from {model_path}...")
+    # Load tokenizer from adapter directory
+    tokenizer = AutoTokenizer.from_pretrained(str(model_path), trust_remote_code=True, local_files_only=True, fix_mistral_regex=True)
     tokenizer.pad_token = tokenizer.eos_token
-    model = LlamaForCausalLM_CCM.from_pretrained(
-        args.model, 
-        torch_dtype=torch.float16, 
+    
+    # Load base model (Llama 3.1 8B Instruct)
+    base_model_id = "meta-llama/Llama-3.1-8B-Instruct"
+    print(f"Loading base model {base_model_id}...")
+    base_model = AutoModelForCausalLM.from_pretrained(
+        base_model_id,
+        dtype=torch.float16,
         device_map='auto',
         trust_remote_code=True
     )
+    
+    # Apply PEFT adapter
+    print(f"Applying PEFT adapter...")
+    model = PeftModel.from_pretrained(base_model, str(model_path))
+    model = model.merge_and_unload()  # Merge adapter weights into base model
     model.eval()
     
     # Add COMP0 token if not present
