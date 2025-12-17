@@ -251,7 +251,6 @@ if __name__ == "__main__":
     # Load tokenizer from adapter directory
     tokenizer = AutoTokenizer.from_pretrained(str(OURS_model_path), trust_remote_code=True, local_files_only=True, fix_mistral_regex=True)
     tokenizer.pad_token = tokenizer.eos_token
-    breakpoint()
 
     # Load base model (Llama 3.1 8B Instruct)
     base_model_id = "meta-llama/Llama-3.1-8B-Instruct"
