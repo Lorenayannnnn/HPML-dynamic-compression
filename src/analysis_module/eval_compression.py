@@ -81,7 +81,22 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
                 should_insert_comp = comp_prob >= threshold
         else:
             # Baseline: Insert after newline token
-            should_insert_comp = (next_token.item() == newline_token_id)
+            # Check if the next token is also newline; if yes, insert COMP after the second newline
+            if next_token.item() == newline_token_id:
+                should_insert_comp = True
+                # Peek at the next token logits
+                with torch.no_grad():
+                    peek_outputs = model(
+                        input_ids=generated_ids[:, -1:],
+                        past_key_values=past_key_values,
+                        use_cache=True,
+                        return_dict=True
+                    )
+                peek_logits = peek_outputs.logits[:, -1, :]
+                peek_next_token = torch.argmax(peek_logits, dim=-1, keepdim=True)
+                if peek_next_token.item() == newline_token_id:
+                    generated_ids = torch.cat([generated_ids, peek_next_token], dim=1)
+                    should_insert_comp = True
         
         # Insert COMP token if needed
         if should_insert_comp:
