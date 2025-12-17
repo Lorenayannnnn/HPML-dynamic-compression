@@ -139,8 +139,10 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
     """
 
     return_results = []
-
-    for i, sample in tqdm(enumerate(test_dataset)):
+    # TODO haha
+    # run on 10 samples for now
+    test_dataset = test_dataset[:10]
+    for i, sample in tqdm(enumerate(test_dataset), total=len(test_dataset)):
         # Extract question and ground truth answer using GSM8K utilities
         gt_answer = extract_gsm8k_answer(sample)
         question = sample.get('question', '')
@@ -227,145 +229,27 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
     # }
 
 
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--test_dataset', type=str, required=False, default='data/gsm8k-test-200.json',help='Path to test JSON file')
-    parser.add_argument('--classifier_path', type=str, default='outputs/classifier/compression_classifier.pt', help='Path to classifier checkpoint')
-    parser.add_argument('--baseline_model', type=str, default='outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
-    parser.add_argument('--OURS_model', type=str, default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
-    parser.add_argument('--threshold', type=float, default=0.5, help='Classifier threshold for COMP insertion')
-    parser.add_argument('--max_new_tokens', type=int, default=256, help='Max tokens to generate')
-    parser.add_argument('--device', type=str, default='cuda')
-    args = parser.parse_args()
-
-    # Load data
-    with open(args.test_dataset) as f:
-        test_data = json.load(f)
-
-    # Load model and tokenizer (PEFT adapter)
-    OURS_model_path = Path(args.OURS_model).resolve()
-    assert OURS_model_path.exists(), f"Model path does not exist: {OURS_model_path}"
-    baseline_model_path = Path(args.baseline_model).resolve()
-
-    print(f"Loading PEFT adapter from {OURS_model_path}...")
-    # Load tokenizer from adapter directory
-    tokenizer = AutoTokenizer.from_pretrained(str(OURS_model_path), trust_remote_code=True, local_files_only=True, fix_mistral_regex=True)
-    tokenizer.pad_token = tokenizer.eos_token
-
-    # Load base model (Llama 3.1 8B Instruct)
-    base_model_id = "meta-llama/Llama-3.1-8B-Instruct"
-    print(f"Loading base model {base_model_id}...")
-    base_model = AutoModelForCausalLM.from_pretrained(
-        base_model_id,
-        device_map='auto',
-        trust_remote_code=True
-    )
-
-    # Apply PEFT adapter
-    print(f"Applying PEFT adapter to load OURS...")
-    model = PeftModel.from_pretrained(base_model, str(OURS_model_path))
-    model = model.merge_and_unload()  # Merge adapter weights into base model
-    model.eval()
-
-    baseline_base_model = AutoModelForCausalLM.from_pretrained(
-        base_model_id,
-        device_map='auto',
-        trust_remote_code=True
-    )
-    # Apply PEFT adapter
-    print(f"Applying PEFT adapter to load baseline...")
-    baseline_base_model = PeftModel.from_pretrained(baseline_base_model, str(baseline_model_path))
-    baseline_base_model = baseline_base_model.merge_and_unload()  # Merge adapter weights into base model
-    baseline_base_model.eval()
-
-    # Add COMP0 token if not present
-    if '<COMP0>' not in tokenizer.get_vocab():
-        raise ValueError('Tokenizer vocabulary does not contain <COMP0>.')
-        # tokenizer.add_special_tokens({'additional_special_tokens': ['<COMP0>']})
-        # model.resize_token_embeddings(len(tokenizer))
-    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP0>')
-
-    # Get newline token ID
-    newline_token_id_list = [
-        tokenizer.encode('\n', add_special_tokens=False)[0],
-        tokenizer.encode('\n\n', add_special_tokens=False)[0]
-    ]
-    print(f"COMP token ID: {comp_token_id}")
-    print(f"newline_token_id_list: {newline_token_id_list}")
-
-    # Load classifier
-    print(f"Loading classifier from {args.classifier_path}...")
-    classifier = CompressionClassifier(hidden_size=model.config.hidden_size, dropout=0.1)
-    classifier.load_state_dict(torch.load(args.classifier_path, map_location=args.device))
-    classifier.eval()
-    classifier = classifier.to(args.device)
-
-    # Run evaluation
-    # print(f"Evaluating on {len(test_data)} examples...")
-    # results = evaluate(
-    #     test_data, model, tokenizer, classifier,
-    #     do_baseline=args.do_baseline,
-    #     comp_token_id=comp_token_id,
-    #     newline_token_id=newline_token_id,
-    #     classifier_threshold=args.threshold,
-    #     max_new_tokens=args.max_new_tokens,
-    #     device=args.device,
-    # )
-
-    print("\nRunning STATIC baseline evaluation...")
-    baseline_results = evaluate(
-        test_data, baseline_base_model, tokenizer, classifier=None,
-        do_baseline=True,
-        comp_token_id=comp_token_id,
-        newline_token_id_list=newline_token_id_list,
-        classifier_threshold=args.threshold,
-        max_new_tokens=args.max_new_tokens,
-        device=args.device,
-    )
-
-    print("\nRunning DYNAMIC classifier evaluation...")
-    dynamic_results = evaluate(
-        test_data, model, tokenizer, classifier=classifier,
-        do_baseline=False,
-        comp_token_id=comp_token_id,
-        newline_token_id_list=newline_token_id_list,
-        classifier_threshold=args.threshold,
-        max_new_tokens=args.max_new_tokens,
-        device=args.device,
-    )
-
-    def print_results(title, r):
-        print(f"\n{title}")
-        print("-" * len(title))
-        print(f"Accuracy:        {r['accuracy']:.2%}")
-        print(f"Avg COMP tokens: {r['avg_comp_tokens']:.2f}")
-        print(f"KV Cache (MB):   {r['avg_kv_cache_mb']:.2f}")
-        print(f"Latency (s):     {r['avg_latency']:.3f}")
-        print(f"Examples:        {r['total_examples']}")
-
-    print("\n" + "=" * 70)
-    print("EVALUATION RESULTS")
-    print("=" * 70)
-
-    print_results("Static Baseline (newline-based)", baseline_results)
-    print_results(f"Dynamic Classifier (threshold={args.threshold})", dynamic_results)
-
+def compare_models(baseline_output_fn, dynamic_output_fn):
     print("\n" + "=" * 70)
     print("COMPRESSION GAINS")
     print("=" * 70)
 
+    with open(baseline_output_fn) as f:
+        baseline_results = json.load(f)
+    with open(dynamic_output_fn) as f:
+        dynamic_results = json.load(f)
+        threshold = dynamic_results.get('threshold', 0.5)
+
     if baseline_results['avg_comp_tokens'] > 0:
         comp_reduction = (
-            baseline_results['avg_comp_tokens']
-            - dynamic_results['avg_comp_tokens']
-        ) / baseline_results['avg_comp_tokens']
+                                 baseline_results['avg_comp_tokens']
+                                 - dynamic_results['avg_comp_tokens']
+                         ) / baseline_results['avg_comp_tokens']
 
         kv_reduction = (
-            baseline_results['avg_kv_cache_mb']
-            - dynamic_results['avg_kv_cache_mb']
-        ) / baseline_results['avg_kv_cache_mb']
+                               baseline_results['avg_kv_cache_mb']
+                               - dynamic_results['avg_kv_cache_mb']
+                       ) / baseline_results['avg_kv_cache_mb']
 
         speedup = (
             baseline_results['avg_latency']
@@ -382,8 +266,139 @@ if __name__ == "__main__":
             {
                 "baseline": baseline_results,
                 "dynamic": dynamic_results,
-                "threshold": args.threshold,
+                "threshold": threshold,
             },
             f,
             indent=2,
         )
+
+
+def main(args):
+    # Load data
+    with open(args.test_dataset) as f:
+        test_data = json.load(f)
+
+    # Load model and tokenizer (PEFT adapter)
+    OURS_model_path = Path(args.OURS_model).resolve()
+    assert OURS_model_path.exists(), f"Model path does not exist: {OURS_model_path}"
+    baseline_model_path = Path(args.baseline_model).resolve()
+
+    print(f"Loading PEFT adapter from {OURS_model_path}...")
+    # Load tokenizer from adapter directory
+    tokenizer = AutoTokenizer.from_pretrained(str(OURS_model_path), trust_remote_code=True, local_files_only=True,
+                                              fix_mistral_regex=True)
+    tokenizer.pad_token = tokenizer.eos_token
+    # Add COMP0 token if not present
+    if '<COMP0>' not in tokenizer.get_vocab():
+        raise ValueError('Tokenizer vocabulary does not contain <COMP0>.')
+        # tokenizer.add_special_tokens({'additional_special_tokens': ['<COMP0>']})
+        # model.resize_token_embeddings(len(tokenizer))
+    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP0>')
+
+    # Get newline token ID
+    newline_token_id_list = [
+        tokenizer.encode('\n', add_special_tokens=False)[0],
+        tokenizer.encode('\n\n', add_special_tokens=False)[0]
+    ]
+    print(f"COMP token ID: {comp_token_id}")
+    print(f"newline_token_id_list: {newline_token_id_list}")
+
+    # Load base model (Llama 3.1 8B Instruct)
+    base_model_id = "meta-llama/Llama-3.1-8B-Instruct"
+    if args.do_baseline:
+        baseline_base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_id,
+            device_map='auto',
+            trust_remote_code=True
+        )
+        # Apply PEFT adapter
+        print(f"Applying PEFT adapter to load baseline...")
+        baseline_base_model = PeftModel.from_pretrained(baseline_base_model, str(baseline_model_path))
+        baseline_base_model = baseline_base_model.merge_and_unload()  # Merge adapter weights into base model
+        baseline_base_model.eval()
+
+        print("\nRunning STATIC baseline evaluation...")
+        results = evaluate(
+            test_data, baseline_base_model, tokenizer, classifier=None,
+            do_baseline=True,
+            comp_token_id=comp_token_id,
+            newline_token_id_list=newline_token_id_list,
+            classifier_threshold=args.threshold,
+            max_new_tokens=args.max_new_tokens,
+            device=args.device,
+        )
+    else:
+        print(f"Loading base model {base_model_id}...")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_id,
+            device_map='auto',
+            trust_remote_code=True
+        )
+
+        # Apply PEFT adapter
+        print(f"Applying PEFT adapter to load OURS...")
+        model = PeftModel.from_pretrained(base_model, str(OURS_model_path))
+        model = model.merge_and_unload()  # Merge adapter weights into base model
+        model.eval()
+        # Load classifier
+        print(f"Loading classifier from {args.classifier_path}...")
+        classifier = CompressionClassifier(hidden_size=model.config.hidden_size, dropout=0.1)
+        classifier.load_state_dict(torch.load(args.classifier_path, map_location=args.device))
+        classifier.eval()
+        classifier = classifier.to(args.device)
+
+        print("\nRunning DYNAMIC classifier evaluation...")
+        results = evaluate(
+            test_data, model, tokenizer, classifier=classifier,
+            do_baseline=False,
+            comp_token_id=comp_token_id,
+            newline_token_id_list=newline_token_id_list,
+            classifier_threshold=args.threshold,
+            max_new_tokens=args.max_new_tokens,
+            device=args.device,
+        )
+
+    def print_results(title, r):
+        print(f"\n{title}")
+        print("-" * len(title))
+        print(f"Accuracy:        {r['accuracy']:.2%}")
+        print(f"Avg COMP tokens: {r['avg_comp_tokens']:.2f}")
+        print(f"KV Cache (MB):   {r['avg_kv_cache_mb']:.2f}")
+        print(f"Latency (s):     {r['avg_latency']:.3f}")
+        print(f"Examples:        {r['total_examples']}")
+
+    print("\n" + "=" * 70)
+    print("EVALUATION RESULTS")
+    print("=" * 70)
+
+    print_results(
+        "Static Baseline (newline-based)" if args.do_baseline else f"Dynamic Classifier (threshold={args.threshold})",
+        results)
+
+    # Save result
+    output_fn = "outputs/baseline_eval_results.json" if args.do_baseline else "outputs/dynamic_eval_results.json"
+    with open(output_fn, "w") as f:
+        json.dump(
+            {
+                "results": results,
+                "threshold": args.threshold if not args.do_baseline else None,
+            },
+            f,
+            indent=2,
+        )
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--test_dataset', type=str, required=False, default='data/gsm8k-test-200.json',help='Path to test JSON file')
+    parser.add_argument('--classifier_path', type=str, default='outputs/classifier/compression_classifier.pt', help='Path to classifier checkpoint')
+    parser.add_argument('--baseline_model', type=str, default='outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
+    parser.add_argument('--OURS_model', type=str, default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
+    parser.add_argument('--threshold', type=float, default=0.5, help='Classifier threshold for COMP insertion')
+    parser.add_argument('--max_new_tokens', type=int, default=256, help='Max tokens to generate')
+    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--do_baseline', action='store_true', help='Whether to run baseline evaluation')
+
+    main(parser.parse_args())
+    # compare_models("outputs/baseline_eval_results.json", "outputs/dynamic_eval_results.json")

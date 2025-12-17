@@ -46,7 +46,7 @@ class CompressionClassifier(nn.Module):
         Returns:
             probs: Tensor of shape (batch_size, seq_len) with probabilities
         """
-        logits, _ = self.forward(hidden_states)
+        logits = self.forward(hidden_states)
         probs = torch.sigmoid(logits)
         return probs
 
