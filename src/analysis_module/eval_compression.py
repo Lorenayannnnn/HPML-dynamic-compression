@@ -189,7 +189,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--test_dataset', type=str, required=True, default='data/gsm-test-200.json',help='Path to test JSON file')
+    parser.add_argument('--test_dataset', type=str, required=True, default='data/gsm8k-test-200.json',help='Path to test JSON file')
     parser.add_argument('--classifier_path', type=str, default='outputs/classifier/compression_classifier.pt', help='Path to classifier checkpoint')
     parser.add_argument('--model', type=str, default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
     parser.add_argument('--threshold', type=float, default=0.5, help='Classifier threshold for COMP insertion')
