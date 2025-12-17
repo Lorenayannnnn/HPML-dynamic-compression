@@ -121,13 +121,35 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
     return generated_ids, comp_count
 
 
-def estimate_kv_cache(seq_len, model):
-    """Estimate KV cache size in MB."""
+def estimate_kv_cache(generated_ids, comp_token_id, model):
+    """
+    Estimate peak KV cache size (MB) based on the longest contiguous
+    sequence of non-compression tokens.
+
+    Args:
+        generated_ids: torch.Tensor of shape (batch_size, seq_len)
+        comp_token_id: int, ID of the <COMP> token
+        model: HuggingFace model (with config.num_hidden_layers and config.hidden_size)
+
+    Returns:
+        float: Estimated peak KV cache in MB
+    """
     num_layers = model.config.num_hidden_layers
     hidden_size = model.config.hidden_size
-    # KV cache: 2 * num_layers * seq_len * hidden_size * 2 bytes (float16)
-    kv_bytes = 2 * num_layers * seq_len * hidden_size * 2
-    return kv_bytes / (1024 * 1024)  # Convert to MB
+
+    max_seq = 0
+    curr_seq = 0
+
+    for token in generated_ids[0].tolist():  # assume batch_size = 1
+        if token == comp_token_id:
+            max_seq = max(max_seq, curr_seq)
+            curr_seq = 0
+        else:
+            curr_seq += 1
+
+    max_seq = max(max_seq, curr_seq)
+    kv_bytes = 2 * num_layers * max_seq * hidden_size * 2
+    return kv_bytes / (1024 * 1024) 
 
 
 def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_token_id_list, do_baseline,
@@ -157,7 +179,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
                 device=device
             )
             static_latency = time.time() - t0
-            static_kv_cache = estimate_kv_cache(static_gen_ids.shape[1], model)
+            static_kv_cache = estimate_kv_cache(static_gen_ids, comp_token_id, model)
 
             static_text = tokenizer.decode(static_gen_ids[0], skip_special_tokens=False)
             static_acc = verify_gsm8k_answer(gt_answer, static_text)
@@ -182,7 +204,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
                 device=device
             )
             dynamic_latency = time.time() - t0
-            dynamic_kv_cache = estimate_kv_cache(dynamic_gen_ids.shape[1], model)
+            dynamic_kv_cache = estimate_kv_cache(dynamic_gen_ids, comp_token_id, model)
 
             dynamic_text = tokenizer.decode(dynamic_gen_ids[0], skip_special_tokens=False)
             # print(f"Sample {i+1} Generated Text:\n{dynamic_text}\n")
