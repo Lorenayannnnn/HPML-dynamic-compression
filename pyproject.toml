@@ -29,6 +29,7 @@ dependencies = [
     "trl>=0.24.0",
     "unsloth>=2025.11.6",
     "wandb>=0.22.2",
+    "math_verify>=0.8.0"
 ]
 
 [tool.uv.workspace]
