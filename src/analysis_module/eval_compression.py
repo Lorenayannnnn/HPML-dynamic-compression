@@ -251,16 +251,29 @@ if __name__ == "__main__":
     # Load tokenizer from adapter directory
     tokenizer = AutoTokenizer.from_pretrained(str(OURS_model_path), trust_remote_code=True, local_files_only=True, fix_mistral_regex=True)
     tokenizer.pad_token = tokenizer.eos_token
-    breakpoint()
 
-    # Load base model (Llama 3.1 8B Instruct)
+    # Base model caching
     base_model_id = "meta-llama/Llama-3.1-8B-Instruct"
-    print(f"Loading base model {base_model_id}...")
-    base_model = AutoModelForCausalLM.from_pretrained(
-        base_model_id,
-        device_map='auto',
-        trust_remote_code=True
-    )
+    base_model_cache_path = Path("outputs/base_model_cache").resolve()
+    
+    if base_model_cache_path.exists():
+        print(f"Loading cached base model from {base_model_cache_path}...")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            str(base_model_cache_path),
+            device_map='auto',
+            trust_remote_code=True,
+            local_files_only=True
+        )
+    else:
+        print(f"Loading base model {base_model_id} from HuggingFace...")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_id,
+            device_map='auto',
+            trust_remote_code=True
+        )
+        print(f"Caching base model to {base_model_cache_path}...")
+        base_model_cache_path.mkdir(parents=True, exist_ok=True)
+        base_model.save_pretrained(str(base_model_cache_path))
 
     # Apply PEFT adapter
     print(f"Applying PEFT adapter to load OURS...")
