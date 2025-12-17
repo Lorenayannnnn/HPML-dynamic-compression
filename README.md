@@ -151,7 +151,7 @@ The script reports accuracy, number of <COMP> tokens, estimated KV cache size, a
 3. **Load data:** [load_data.py](src/data_module/load_data.py) - `load_gsm8k_compressed()` for JSON with train/val/test splits
 4. **Preprocessing:** [preprocessing.py](src/data_module/preprocessing.py) - `tokenize_gsm8k()` splits by `<COMP>` and creates labels
 5. **Model:**
-   - [compression_classifier.py](src/model_module/compression_classifier.py) - Binary head
+   - [compression_classifier.py](src/model_module/compression_classifier.py) - Binary head, 2-layer MLP 
    - [compression_probe_model.py](src/model_module/compression_probe_model.py) - Frozen LM + classifier wrapper
 6. **Training:** [train_utils.py](src/train_module/train_utils.py) - HuggingFace Trainer
 
@@ -173,12 +173,12 @@ The script reports accuracy, number of <COMP> tokens, estimated KV cache size, a
 - [x] Train conditional LoRA
 
 ### Phase 4: Integration & Inference
-- [ ] Create unified inference pipeline (classifier + CCM)
-- [ ] Implement baseline methods (no compression, fixed interval, random)
+- [x] Create unified inference pipeline (classifier + CCM)
+- [x] Implement baseline methods (no compression, fixed interval, random)
 
 ### Phase 5: Evaluation
-- [ ] Run comprehensive evaluation on GSM8K test set
-- [ ] Generate comparison artifacts (accuracy vs. compression trade-off)
+- [x] Run comprehensive evaluation on GSM8K test set
+- [x] Generate comparison artifacts (accuracy vs. compression trade-off)
 
 ### Phase 6: Meta-Analysis
 - [ ] Categorize compression points (after calculations, conclusions, etc.)
