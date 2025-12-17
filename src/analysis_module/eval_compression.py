@@ -13,8 +13,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import torch
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from model_module.compression_classifier import CompressionClassifier
-from analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
+from src.model_module.ccm_llama import LlamaForCausalLM_CCM
+from src.model_module.compression_classifier import CompressionClassifier
+from src.analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
 import json
 import time
 from peft import PeftModel
@@ -224,20 +225,11 @@ if __name__ == "__main__":
     print(f"Loading base model {base_model} and applying PEFT adapter {args.model}...")
     tokenizer = AutoTokenizer.from_pretrained(base_model, use_auth_token=True, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
-
-    base_model_obj = AutoModelForCausalLM.from_pretrained(
-        base_model,
-        torch_dtype=torch.float16,
-        device_map="auto",
-        trust_remote_code=True,
-        use_auth_token=True,
-    )
-
-    # Load your PEFT adapter
-    model = PeftModel.from_pretrained(
-        base_model_obj,
-        args.model,
-        device_map="auto",
+    model = LlamaForCausalLM_CCM.from_pretrained(
+        args.model, 
+        torch_dtype=torch.float16, 
+        device_map='auto',
+        trust_remote_code=True
     )
     model.eval()
     
