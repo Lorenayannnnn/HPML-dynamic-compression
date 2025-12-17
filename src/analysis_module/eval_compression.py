@@ -35,20 +35,18 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
     """
     generated_ids = input_ids.clone()
     past_key_values = None
-    # pos_id_offset tracks the cumulative offset from COMP token insertions
-    # This is needed for CCM models to adjust position embeddings correctly
-    pos_id_offset = torch.zeros((input_ids.shape[0], 1), dtype=torch.long, device=device)
+    # pos_id_offset = torch.zeros((input_ids.shape[0], 1), dtype=torch.long, device=device)
+    pos_id_offset = 0
     comp_count = 0
-    comp_positions = []
+    # comp_positions = []
+    comp_token_tensor = torch.tensor([[comp_token_id]], device='cuda')
 
     for step in range(max_new_tokens):
         # Determine input for this step
         if past_key_values is None:
             curr_input_ids = generated_ids
-            curr_pos_id_offset = None  # First pass, no offset needed
         else:
             curr_input_ids = generated_ids[:, -1:]
-            curr_pos_id_offset = pos_id_offset
 
         # Forward pass with CCM model (supports pos_id_offset)
         with torch.no_grad():
@@ -58,7 +56,7 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
                 use_cache=True,
                 output_hidden_states=use_classifier,
                 return_dict=True,
-                pos_id_offset=curr_pos_id_offset,
+                pos_id_offset=pos_id_offset,
             )
 
         logits = outputs.logits[:, -1, :]
@@ -67,6 +65,7 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
 
         # Append generated token
         generated_ids = torch.cat([generated_ids, next_token], dim=1)
+        pos_id_offset += curr_input_ids.shape[-1]  # Increment by current input length only
 
         # Check for EOS
         if next_token.item() == tokenizer.eos_token_id:
@@ -102,17 +101,14 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
 
         # Insert COMP token if needed
         if should_insert_comp:
-            comp_token = torch.tensor([[comp_token_id]], device=device)
-            generated_ids = torch.cat([generated_ids, comp_token], dim=1)
-            comp_positions.append(generated_ids.shape[1] - 1)
+            # generated_ids = torch.cat([generated_ids, comp_token], dim=1)
+            # comp_positions.append(generated_ids.shape[1] - 1)
             comp_count += 1
-            # Increment pos_id_offset by 1 for each COMP token inserted
-            pos_id_offset += 1
 
             # Update past_key_values for COMP token (simplified: just process it)
             with torch.no_grad():
                 comp_outputs = model(
-                    input_ids=comp_token,
+                    input_ids=comp_token_tensor,
                     past_key_values=past_key_values,
                     use_cache=True,
                     return_dict=True,
@@ -120,7 +116,7 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
                 )
             past_key_values = comp_outputs.past_key_values
 
-    return generated_ids, comp_count, comp_positions
+    return generated_ids, comp_count
 
 
 def estimate_kv_cache(seq_len, model):
@@ -150,7 +146,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
         if do_baseline:
             # ===== STATIC BASELINE: Insert COMP after newline =====
             t0 = time.time()
-            static_gen_ids, static_comp_count, _ = generate_with_compression(
+            static_gen_ids, static_comp_count = generate_with_compression(
                 model, tokenizer, input_ids, classifier=None,
                 comp_token_id=comp_token_id,
                 newline_token_id_list=newline_token_id_list,
@@ -174,7 +170,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
 
             # ===== DYNAMIC: Use classifier to decide COMP insertion =====
             t0 = time.time()
-            dynamic_gen_ids, dynamic_comp_count, _ = generate_with_compression(
+            dynamic_gen_ids, dynamic_comp_count = generate_with_compression(
                 model, tokenizer, input_ids, classifier=classifier,
                 comp_token_id=comp_token_id,
                 newline_token_id_list=newline_token_id_list,
@@ -388,10 +384,15 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--test_dataset', type=str, required=False, default='data/gsm8k-test-200.json',help='Path to test JSON file')
-    parser.add_argument('--classifier_path', type=str, default='outputs/classifier/compression_classifier.pt', help='Path to classifier checkpoint')
-    parser.add_argument('--baseline_model', type=str, default='outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
-    parser.add_argument('--OURS_model', type=str, default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
+    parser.add_argument('--test_dataset', type=str, required=False, default='data/gsm8k-test-200.json',
+                        help='Path to test JSON file')
+    parser.add_argument('--classifier_path', type=str, default='outputs/classifier/compression_classifier.pt',
+                        help='Path to classifier checkpoint')
+    parser.add_argument('--baseline_model', type=str,
+                        default='outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur',
+                        help='Path to model (local) or HF model ID')
+    parser.add_argument('--OURS_model', type=str, default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur',
+                        help='Path to model (local) or HF model ID')
     parser.add_argument('--threshold', type=float, default=0.5, help='Classifier threshold for COMP insertion')
     parser.add_argument('--max_new_tokens', type=int, default=256, help='Max tokens to generate')
     parser.add_argument('--device', type=str, default='cuda')
