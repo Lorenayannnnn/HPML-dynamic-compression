@@ -7,6 +7,7 @@ Follows CCM inference pattern with streaming COMP token insertion.
 import torch
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from src.model_module.ccm_llama import LlamaForCausalLM_CCM
 from src.model_module.compression_classifier import CompressionClassifier
 from src.analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
 import json
@@ -216,7 +217,7 @@ if __name__ == "__main__":
     print(f"Loading model {args.model}...")
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
+    model = LlamaForCausalLM_CCM.from_pretrained(
         args.model, 
         torch_dtype=torch.float16, 
         device_map='auto',
