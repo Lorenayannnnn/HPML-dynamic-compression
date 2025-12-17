@@ -16,6 +16,7 @@ import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from model_module.ccm_llama import LlamaForCausalLM_CCM
 from model_module.compression_classifier import CompressionClassifier
+from model_module.peft_loader import load_peft_model, get_comp_and_newline_tokens
 from analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
 import json
 import time
@@ -77,8 +78,8 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
         if use_classifier and classifier is not None:
             # OURS: Use classifier to predict compression
             if outputs.hidden_states is not None:
-                hidden_states = outputs.hidden_states[-1][:, -1, :]  # Last layer, last token
-                comp_prob = classifier.predict(hidden_states).item()
+                hidden_states = outputs.hidden_states[-1][:, -1:, :]  # Last layer, last token, shape: (batch_size, 1, hidden_size)
+                comp_prob = classifier.predict(hidden_states)[0, 0].item()  # Get probability for first batch, first (and only) token
                 should_insert_comp = comp_prob >= threshold
         else:
             # Baseline: Insert after newline token
@@ -277,42 +278,32 @@ def main(args):
     baseline_model_path = Path(args.baseline_model).resolve()
 
     print(f"Loading PEFT adapter from {OURS_model_path}...")
-    # Load tokenizer from adapter directory
+    
+    # Load tokenizer and get special token IDs
     tokenizer = AutoTokenizer.from_pretrained(str(OURS_model_path), trust_remote_code=True, local_files_only=True,
                                               fix_mistral_regex=True)
     tokenizer.pad_token = tokenizer.eos_token
-    # Add COMP0 token if not present
-    if '<COMP0>' not in tokenizer.get_vocab():
-        raise ValueError('Tokenizer vocabulary does not contain <COMP0>.')
-        # tokenizer.add_special_tokens({'additional_special_tokens': ['<COMP0>']})
-        # model.resize_token_embeddings(len(tokenizer))
-    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP0>')
-
-    # Get newline token ID
-    newline_token_id_list = [
-        tokenizer.encode('\n', add_special_tokens=False)[0],
-        tokenizer.encode('\n\n', add_special_tokens=False)[0]
-    ]
+    comp_token_id, newline_token_id_list = get_comp_and_newline_tokens(tokenizer)
+    
     print(f"COMP token ID: {comp_token_id}")
     print(f"newline_token_id_list: {newline_token_id_list}")
 
     # Load base model (Llama 3.1 8B Instruct)
     base_model_id = "meta-llama/Llama-3.1-8B-Instruct"
+    dtype = torch.float16 if args.device == 'cuda' else torch.float32
+    
     if args.do_baseline:
-        baseline_base_model = AutoModelForCausalLM.from_pretrained(
-            base_model_id,
-            device_map='auto',
-            trust_remote_code=True
+        print(f"\nLoading baseline model with PEFT adapter...")
+        baseline_model, _ = load_peft_model(
+            base_model_id=base_model_id,
+            adapter_path=str(baseline_model_path),
+            device=args.device,
+            dtype=dtype
         )
-        # Apply PEFT adapter
-        print(f"Applying PEFT adapter to load baseline...")
-        baseline_base_model = PeftModel.from_pretrained(baseline_base_model, str(baseline_model_path))
-        baseline_base_model = baseline_base_model.merge_and_unload()  # Merge adapter weights into base model
-        baseline_base_model.eval()
 
         print("\nRunning STATIC baseline evaluation...")
         results = evaluate(
-            test_data, baseline_base_model, tokenizer, classifier=None,
+            test_data, baseline_model, tokenizer, classifier=None,
             do_baseline=True,
             comp_token_id=comp_token_id,
             newline_token_id_list=newline_token_id_list,
@@ -321,22 +312,18 @@ def main(args):
             device=args.device,
         )
     else:
-        print(f"Loading base model {base_model_id}...")
-        base_model = AutoModelForCausalLM.from_pretrained(
-            base_model_id,
-            device_map='auto',
-            trust_remote_code=True
+        print(f"\nLoading OURS model with PEFT adapter...")
+        model, _ = load_peft_model(
+            base_model_id=base_model_id,
+            adapter_path=str(OURS_model_path),
+            device=args.device,
+            dtype=dtype
         )
-
-        # Apply PEFT adapter
-        print(f"Applying PEFT adapter to load OURS...")
-        model = PeftModel.from_pretrained(base_model, str(OURS_model_path))
-        model = model.merge_and_unload()  # Merge adapter weights into base model
-        model.eval()
+        
         # Load classifier
         print(f"Loading classifier from {args.classifier_path}...")
         classifier = CompressionClassifier(hidden_size=model.config.hidden_size, dropout=0.1)
-        classifier.load_state_dict(torch.load(args.classifier_path, map_location=args.device))
+        classifier.load_state_dict(torch.load(args.classifier_path, map_location='cpu'))
         classifier.eval()
         classifier = classifier.to(args.device)
 
