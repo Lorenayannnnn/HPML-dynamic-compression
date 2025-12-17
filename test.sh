@@ -8,6 +8,5 @@
 
 export PYTHONPATH=:${PYTHONPATH}
 
-CUDA_VISIBLE_DEVICES=0 python src/analysis_module/eval_compression.py \
-    --model outputs/OURS_llama-3.1-8b-instruct-online-concat_recur
+CUDA_VISIBLE_DEVICES=0 python src/analysis_module/eval_compression.py
 #    --model outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur
