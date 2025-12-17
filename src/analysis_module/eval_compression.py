@@ -13,20 +13,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import torch
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from src.model_module.ccm_llama import LlamaForCausalLM_CCM
-from src.model_module.compression_classifier import CompressionClassifier
-from src.analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
+from model_module.compression_classifier import CompressionClassifier
+from analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
 import json
 import time
 from peft import PeftModel
 
-def generate_with_compression(model, tokenizer, input_ids, classifier, comp_token_id, 
-                             newline_token_id, use_classifier=True, threshold=0.5, 
+def generate_with_compression(model, tokenizer, input_ids, classifier, comp_token_id,
+                             newline_token_id, use_classifier=True, threshold=0.5,
                              max_new_tokens=256, device='cuda'):
     """
     Generate tokens online, inserting COMP tokens based on strategy.
     Follows CCM inference pattern.
-    
+
     Args:
         use_classifier: If True, use classifier to decide COMP placement
                        If False, use baseline (newline-based)
@@ -36,14 +35,14 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
     pos_id_offset = 0
     comp_count = 0
     comp_positions = []
-    
+
     for step in range(max_new_tokens):
         # Determine input for this step
         if past_key_values is None:
             curr_input_ids = generated_ids
         else:
             curr_input_ids = generated_ids[:, -1:]
-        
+
         # Forward pass
         with torch.no_grad():
             outputs = model(
@@ -53,21 +52,21 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
                 output_hidden_states=use_classifier,
                 return_dict=True
             )
-        
+
         logits = outputs.logits[:, -1, :]
         past_key_values = outputs.past_key_values
         next_token = torch.argmax(logits, dim=-1, keepdim=True)
-        
+
         # Append generated token
         generated_ids = torch.cat([generated_ids, next_token], dim=1)
-        
+
         # Check for EOS
         if next_token.item() == tokenizer.eos_token_id:
             break
-        
+
         # ===== DECIDE IF WE SHOULD INSERT COMP =====
         should_insert_comp = False
-        
+
         if use_classifier and classifier is not None:
             # OURS: Use classifier to predict compression
             if outputs.hidden_states is not None:
@@ -92,14 +91,14 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
                 if peek_next_token.item() == newline_token_id:
                     generated_ids = torch.cat([generated_ids, peek_next_token], dim=1)
                     should_insert_comp = True
-        
+
         # Insert COMP token if needed
         if should_insert_comp:
             comp_token = torch.tensor([[comp_token_id]], device=device)
             generated_ids = torch.cat([generated_ids, comp_token], dim=1)
             comp_positions.append(generated_ids.shape[1] - 1)
             comp_count += 1
-            
+
             # Update past_key_values for COMP token (simplified: just process it)
             with torch.no_grad():
                 comp_outputs = model(
@@ -109,7 +108,7 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
                     return_dict=True
                 )
             past_key_values = comp_outputs.past_key_values
-    
+
     return generated_ids, comp_count, comp_positions
 
 
@@ -134,7 +133,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
         # Extract question and ground truth answer using GSM8K utilities
         gt_answer = extract_gsm8k_answer(sample)
         question = sample.get('question', '')
-        
+
         # Tokenize input
         input_ids = tokenizer.encode(question, return_tensors='pt').to(device)
 
@@ -162,7 +161,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
                 'accuracy': static_acc
             })
         else:
-        
+
             # ===== DYNAMIC: Use classifier to decide COMP insertion =====
             t0 = time.time()
             dynamic_gen_ids, dynamic_comp_count, _ = generate_with_compression(
@@ -216,73 +215,96 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
     #     }
     # }
 
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--test_dataset', type=str, required=False, default='data/gsm8k-test-200.json',help='Path to test JSON file')
-    parser.add_argument('--classifier_path', type=str, default='outputs/classifier/compression_classifier.pt', help='Path to classifier checkpoint')
-    parser.add_argument('--model', type=str, default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
-    parser.add_argument('--do_baseline', action='store_true', help='Run static baseline evaluation')
-    parser.add_argument('--threshold', type=float, default=0.5, help='Classifier threshold for COMP insertion')
-    parser.add_argument('--max_new_tokens', type=int, default=256, help='Max tokens to generate')
-    parser.add_argument('--device', type=str, default='cuda')
-    args = parser.parse_args()
-    
+def main(args):
     # Load data
     with open(args.test_dataset) as f:
         test_data = json.load(f)
-    
+
     # Load model and tokenizer
     base_model = "meta-llama/Llama-3.1-8B-Instruct"
 
-    print(f"Loading base model {base_model} and applying PEFT adapter {args.model}...")
+    print(f"Loading base model {base_model} and applying PEFT adapter...")
     tokenizer = AutoTokenizer.from_pretrained(base_model, use_auth_token=True, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
-    model = LlamaForCausalLM_CCM.from_pretrained(
-        args.model, 
-        torch_dtype=torch.float16, 
-        device_map='auto',
-        trust_remote_code=True
+
+    OURS_model = AutoModelForCausalLM.from_pretrained(
+        base_model,
+        device_map="auto",
+        trust_remote_code=True,
+        use_auth_token=True,
     )
-    model.eval()
+
+    baseline_model = AutoModelForCausalLM.from_pretrained(
+        base_model,
+        device_map="auto",
+        trust_remote_code=True,
+        use_auth_token=True,
+    )
+
+    print(f"Load OUR model {args.OURS_model}...")
+    # Load PEFT adapters - handle trainer.save_model() format
+    import os
+    import shutil
     
+    def prepare_peft_checkpoint(path):
+        """Rename model.safetensors to adapter_model.safetensors if needed."""
+        abs_path = os.path.abspath(path)
+        model_file = os.path.join(abs_path, "model.safetensors")
+        adapter_file = os.path.join(abs_path, "adapter_model.safetensors")
+        
+        if os.path.exists(model_file) and not os.path.exists(adapter_file):
+            print(f"Renaming {model_file} to {adapter_file}")
+            shutil.copy2(model_file, adapter_file)
+        
+        return abs_path
+    
+    ours_path = prepare_peft_checkpoint(args.OURS_model)
+    baseline_path = prepare_peft_checkpoint(args.baseline_model)
+    
+    print(f"Loading OURS adapter from: {ours_path}")
+    OURS_model = PeftModel.from_pretrained(OURS_model, ours_path, is_trainable=False)
+    OURS_model.eval()
+
+    print(f"Loading baseline adapter from: {baseline_path}")
+    baseline_model = PeftModel.from_pretrained(baseline_model, baseline_path, is_trainable=False)
+    baseline_model.eval()
+
     # Add COMP token if not present
-    if '<COMP>' not in tokenizer.get_vocab():
-        tokenizer.add_special_tokens({'additional_special_tokens': ['<COMP>']})
-        model.resize_token_embeddings(len(tokenizer))
-    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP>')
-    
+    # if '<COMP>' not in tokenizer.get_vocab():
+    #     tokenizer.add_special_tokens({'additional_special_tokens': ['<COMP>']})
+    #     model.resize_token_embeddings(len(tokenizer))
+    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP0>')
+    breakpoint()
+
     # Get newline token ID
     newline_token_id = tokenizer.convert_tokens_to_ids('\n')
     print(f"COMP token ID: {comp_token_id}")
     print(f"Newline token ID: {newline_token_id}")
-    
+
     # Load classifier
     print(f"Loading classifier from {args.classifier_path}...")
     classifier = None
     if not args.do_baseline:
-        classifier = CompressionClassifier(hidden_size=model.config.hidden_size, dropout=0.1)
+        classifier = CompressionClassifier(hidden_size=OURS_model.config.hidden_size, dropout=0.1)
         classifier.load_state_dict(torch.load(args.classifier_path, map_location=args.device))
         classifier.eval()
         classifier = classifier.to(args.device)
 
     # Run evaluation
     print(f"Evaluating on {len(test_data)} examples...")
-    results = evaluate(
-        test_data, model, tokenizer, classifier,
-        do_baseline=args.do_baseline,
-        comp_token_id=comp_token_id,
-        newline_token_id=newline_token_id,
-        classifier_threshold=args.threshold,
-        max_new_tokens=args.max_new_tokens,
-        device=args.device,
-    )
+    # results = evaluate(
+    #     test_data, model, tokenizer, classifier,
+    #     do_baseline=args.do_baseline,
+    #     comp_token_id=comp_token_id,
+    #     newline_token_id=newline_token_id,
+    #     classifier_threshold=args.threshold,
+    #     max_new_tokens=args.max_new_tokens,
+    #     device=args.device,
+    # )
 
     print("\nRunning STATIC baseline evaluation...")
     baseline_results = evaluate(
-        test_data, model, tokenizer, classifier=None,
+        test_data, baseline_model, tokenizer, classifier=None,
         do_baseline=True,
         comp_token_id=comp_token_id,
         newline_token_id=newline_token_id,
@@ -293,7 +315,7 @@ if __name__ == "__main__":
 
     print("\nRunning DYNAMIC classifier evaluation...")
     dynamic_results = evaluate(
-        test_data, model, tokenizer, classifier=classifier,
+        test_data, OURS_model, tokenizer, classifier=classifier,
         do_baseline=False,
         comp_token_id=comp_token_id,
         newline_token_id=newline_token_id,
@@ -324,14 +346,14 @@ if __name__ == "__main__":
 
     if baseline_results['avg_comp_tokens'] > 0:
         comp_reduction = (
-            baseline_results['avg_comp_tokens']
-            - dynamic_results['avg_comp_tokens']
-        ) / baseline_results['avg_comp_tokens']
+                                 baseline_results['avg_comp_tokens']
+                                 - dynamic_results['avg_comp_tokens']
+                         ) / baseline_results['avg_comp_tokens']
 
         kv_reduction = (
-            baseline_results['avg_kv_cache_mb']
-            - dynamic_results['avg_kv_cache_mb']
-        ) / baseline_results['avg_kv_cache_mb']
+                               baseline_results['avg_kv_cache_mb']
+                               - dynamic_results['avg_kv_cache_mb']
+                       ) / baseline_results['avg_kv_cache_mb']
 
         speedup = (
             baseline_results['avg_latency']
@@ -354,3 +376,19 @@ if __name__ == "__main__":
             indent=2,
         )
 
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--test_dataset', type=str, required=False, default='data/gsm8k-test-200.json',help='Path to test JSON file')
+    parser.add_argument('--classifier_path', type=str, default='outputs/classifier/compression_classifier.pt', help='Path to classifier checkpoint')
+    parser.add_argument('--OURS_model', type=str, default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
+    parser.add_argument('--baseline_model', type=str, default='outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
+    parser.add_argument('--do_baseline', action='store_true', help='Run static baseline evaluation')
+    parser.add_argument('--threshold', type=float, default=0.5, help='Classifier threshold for COMP insertion')
+    parser.add_argument('--max_new_tokens', type=int, default=256, help='Max tokens to generate')
+    parser.add_argument('--device', type=str, default='cuda')
+
+    main(parser.parse_args())
+#CUDA_VISIBLE_DEVICES=0 python src/analysis_module/eval_compression.py
