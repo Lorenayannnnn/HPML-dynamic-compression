@@ -1,0 +1,14 @@
+{
+  "additional_special_tokens": [
+    {
+      "content": "<COMP0>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false
+    }
+  ],
+  "bos_token": "\"",
+  "eos_token": "#",
+  "pad_token": "!"
+}
