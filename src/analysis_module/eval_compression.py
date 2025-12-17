@@ -13,9 +13,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import torch
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from src.model_module.ccm_llama import LlamaForCausalLM_CCM
-from src.model_module.compression_classifier import CompressionClassifier
-from src.analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
+from model_module.ccm_llama import LlamaForCausalLM_CCM
+from model_module.compression_classifier import CompressionClassifier
+from analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
 import json
 import time
 from peft import PeftModel
@@ -25,7 +25,7 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
                              max_new_tokens=256, device='cuda'):
     """
     Generate tokens online, inserting COMP tokens based on strategy.
-    Follows CCM inference pattern.
+    Follows CCM inference pattern with proper pos_id_offset tracking.
     
     Args:
         use_classifier: If True, use classifier to decide COMP placement
@@ -33,7 +33,9 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
     """
     generated_ids = input_ids.clone()
     past_key_values = None
-    pos_id_offset = 0
+    # pos_id_offset tracks the cumulative offset from COMP token insertions
+    # This is needed for CCM models to adjust position embeddings correctly
+    pos_id_offset = torch.zeros((input_ids.shape[0], 1), dtype=torch.long, device=device)
     comp_count = 0
     comp_positions = []
     
@@ -41,17 +43,20 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
         # Determine input for this step
         if past_key_values is None:
             curr_input_ids = generated_ids
+            curr_pos_id_offset = None  # First pass, no offset needed
         else:
             curr_input_ids = generated_ids[:, -1:]
+            curr_pos_id_offset = pos_id_offset
         
-        # Forward pass
+        # Forward pass with CCM model (supports pos_id_offset)
         with torch.no_grad():
             outputs = model(
                 input_ids=curr_input_ids,
                 past_key_values=past_key_values,
                 use_cache=True,
                 output_hidden_states=use_classifier,
-                return_dict=True
+                return_dict=True,
+                pos_id_offset=curr_pos_id_offset,
             )
         
         logits = outputs.logits[:, -1, :]
@@ -84,6 +89,8 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
             generated_ids = torch.cat([generated_ids, comp_token], dim=1)
             comp_positions.append(generated_ids.shape[1] - 1)
             comp_count += 1
+            # Increment pos_id_offset by 1 for each COMP token inserted
+            pos_id_offset += 1
             
             # Update past_key_values for COMP token (simplified: just process it)
             with torch.no_grad():
@@ -91,7 +98,8 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
                     input_ids=comp_token,
                     past_key_values=past_key_values,
                     use_cache=True,
-                    return_dict=True
+                    return_dict=True,
+                    pos_id_offset=pos_id_offset,
                 )
             past_key_values = comp_outputs.past_key_values
     
@@ -233,11 +241,11 @@ if __name__ == "__main__":
     )
     model.eval()
     
-    # Add COMP token if not present
-    if '<COMP>' not in tokenizer.get_vocab():
-        tokenizer.add_special_tokens({'additional_special_tokens': ['<COMP>']})
+    # Add COMP0 token if not present
+    if '<COMP0>' not in tokenizer.get_vocab():
+        tokenizer.add_special_tokens({'additional_special_tokens': ['<COMP0>']})
         model.resize_token_embeddings(len(tokenizer))
-    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP>')
+    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP0>')
     
     # Get newline token ID
     newline_token_id = tokenizer.convert_tokens_to_ids('\n')
