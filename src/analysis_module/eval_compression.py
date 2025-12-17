@@ -139,9 +139,6 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
     """
 
     return_results = []
-    # TODO haha
-    # run on 10 samples for now
-    test_dataset = test_dataset[:10]
     for i, sample in tqdm(enumerate(test_dataset), total=len(test_dataset)):
         # Extract question and ground truth answer using GSM8K utilities
         gt_answer = extract_gsm8k_answer(sample)
