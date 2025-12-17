@@ -330,7 +330,7 @@ if __name__ == "__main__":
         test_data, model, tokenizer, classifier=classifier,
         do_baseline=False,
         comp_token_id=comp_token_id,
-        newline_token_id=newline_token_id,
+        newline_token_id_list=newline_token_id_list,
         classifier_threshold=args.threshold,
         max_new_tokens=args.max_new_tokens,
         device=args.device,
