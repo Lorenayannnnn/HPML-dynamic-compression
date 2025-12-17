@@ -1,236 +1,274 @@
-import time
-import numpy as np
+"""
+Online evaluation script for GSM8K compression.
+Compares static baseline vs. dynamic classifier-based compression during generation.
+Follows CCM inference pattern with streaming COMP token insertion.
+"""
+
 import torch
-import os
-
-from omegaconf import OmegaConf
-from transformers import AutoConfig, AutoTokenizer
-
+import numpy as np
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from src.model_module.compression_classifier import CompressionClassifier
-from src.model_module.load_model import load_model
-from src.data_module.preprocessing import create_tokenizer
-from src.common_utils import seed_all
+from src.analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
+import json
+import time
 
 
-# -----------------------------
-# Utility functions for inserting COMP tokens
-# -----------------------------
-def insert_static_comp(input_ids: torch.LongTensor, interval: int, comp_id: int) -> torch.LongTensor:
-    toks = input_ids.tolist()
-    out = []
-    for i, t in enumerate(toks, 1):
-        out.append(t)
-        if i % interval == 0:
-            out.append(comp_id)
-    return torch.tensor(out, dtype=torch.long)
-
-
-def insert_dynamic_comp(input_ids: torch.LongTensor, hidden_states: torch.FloatTensor,
-                        classifier: CompressionClassifier, threshold: float, comp_id: int):
-    if hidden_states.dim() == 3:
-        hidden_states = hidden_states.squeeze(0)
-    # CompressionClassifier.predict() returns probs directly (shape: seq_len)
-    probs = classifier.predict(hidden_states.to(input_ids.device)).detach().cpu().numpy()
-    toks = input_ids.tolist()
-    out = []
-    for i, t in enumerate(toks):
-        out.append(t)
-        if probs[i] >= threshold:
-            out.append(comp_id)
-    return torch.tensor(out, dtype=torch.long), probs
-
-
-# -----------------------------
-# Core evaluation functions
-# NOTE: model_wrapper should be a wrapper/dataclass that provides:
-#   - .model: the actual language model (for device access)
-#   - .tokenizer: the tokenizer
-#   - .generate(input_ids): generates text from input
-#   - .forward(input_ids, return_hidden): returns forward pass with hidden states
-#   - .estimate_kv_size(): estimates KV cache size
-
-
-def run_static_baseline(example, model_wrapper, comp_id: int, interval: int):
-    """Run static interval-based compression baseline.
+def generate_with_compression(model, tokenizer, input_ids, classifier, comp_token_id, 
+                             newline_token_id, use_classifier=True, threshold=0.5, 
+                             max_new_tokens=256, device='cuda'):
+    """
+    Generate tokens online, inserting COMP tokens based on strategy.
+    Follows CCM inference pattern.
     
     Args:
-        example: Dict with 'input_ids' key
-        model_wrapper: Wrapper providing .generate(), .estimate_kv_size(), .tokenizer
-        comp_id: Token ID for <COMP> token
-        interval: Number of tokens between <COMP> insertions
-    
-    Returns:
-        Dict with 'gen_text', 'latency', 'kv_est', 'comp_count'
+        use_classifier: If True, use classifier to decide COMP placement
+                       If False, use baseline (newline-based)
     """
-    input_ids = example["input_ids"].unsqueeze(0)
-    input_ids_with_comp = insert_static_comp(input_ids.squeeze(0), interval, comp_id).unsqueeze(0)
-
-    t0 = time.time()
-    gen_ids = model_wrapper.generate(input_ids_with_comp)
-    latency = time.time() - t0
-
-    kv_est = model_wrapper.estimate_kv_size()
-    gen_text = model_wrapper.tokenizer.decode(gen_ids[0], skip_special_tokens=True)
-
-    return {"gen_text": gen_text, "latency": latency, "kv_est": kv_est,
-            "comp_count": (input_ids_with_comp == comp_id).sum().item()}
-
-
-def run_dynamic_classifier(example, model_wrapper, classifier: CompressionClassifier, comp_id: int, threshold: float):
-    """Run dynamic classifier-based compression.
+    generated_ids = input_ids.clone()
+    past_key_values = None
+    pos_id_offset = 0
+    comp_count = 0
+    comp_positions = []
     
-    Args:
-        example: Dict with 'input_ids' key
-        model_wrapper: Wrapper providing .generate(), .forward(), .estimate_kv_size(), .tokenizer, .model
-        classifier: Trained CompressionClassifier
-        comp_id: Token ID for <COMP> token
-        threshold: Probability threshold for inserting <COMP> tokens
-    
-    Returns:
-        Dict with 'gen_text', 'latency', 'kv_est', 'comp_count', 'probs'
-    """
-    input_ids = example["input_ids"].unsqueeze(0).to(model_wrapper.model.device)
-    fwd = model_wrapper.forward(input_ids, return_hidden=True)
-    hidden = fwd["hidden_states"]
-    if hidden is None:
-        raise RuntimeError("Model did not return hidden states required for classifier.")
-
-    input_with_comp, probs = insert_dynamic_comp(input_ids.squeeze(0).cpu(), hidden.cpu(),
-                                                 classifier, threshold, comp_id)
-    input_with_comp = input_with_comp.unsqueeze(0)
-
-    t0 = time.time()
-    gen_ids = model_wrapper.generate(input_with_comp.to(model_wrapper.model.device))
-    latency = time.time() - t0
-
-    kv_est = model_wrapper.estimate_kv_size()
-    gen_text = model_wrapper.tokenizer.decode(gen_ids[0], skip_special_tokens=True)
-    comp_count = (input_with_comp == comp_id).sum().item()
-
-    return {"gen_text": gen_text, "latency": latency, "kv_est": kv_est,
-            "comp_count": comp_count, "probs": probs}
-
-
-# -----------------------------
-# Accuracy function (task-dependent)
-# -----------------------------
-def accuracy_from_generation(generated_text: str, reference_text: str) -> float:
-    return 1.0 if generated_text.strip() == reference_text.strip() else 0.0
-
-
-# -----------------------------
-# Orchestration
-# -----------------------------
-def evaluate(dataset, model_wrapper, classifier: CompressionClassifier, comp_id: int,
-             static_interval: int, cls_threshold: float, max_examples: int = 100):
-    results = {"static": [], "dynamic": []}
-
-    for i, item in enumerate(dataset):
-        if i >= max_examples:
+    for step in range(max_new_tokens):
+        # Determine input for this step
+        if past_key_values is None:
+            curr_input_ids = generated_ids
+        else:
+            curr_input_ids = generated_ids[:, -1:]
+        
+        # Forward pass
+        with torch.no_grad():
+            outputs = model(
+                input_ids=curr_input_ids,
+                past_key_values=past_key_values,
+                use_cache=True,
+                output_hidden_states=use_classifier,
+                return_dict=True
+            )
+        
+        logits = outputs.logits[:, -1, :]
+        past_key_values = outputs.past_key_values
+        next_token = torch.argmax(logits, dim=-1, keepdim=True)
+        
+        # Append generated token
+        generated_ids = torch.cat([generated_ids, next_token], dim=1)
+        
+        # Check for EOS
+        if next_token.item() == tokenizer.eos_token_id:
             break
-        ex = {"input_ids": item["input_ids"], "reference": item.get("reference", "")}
-
-        # Static baseline
-        res_static = run_static_baseline(ex, model_wrapper, comp_id, static_interval)
-        res_static["acc"] = accuracy_from_generation(res_static["gen_text"], ex["reference"])
-        results["static"].append(res_static)
-
-        # Dynamic classifier
-        res_dyn = run_dynamic_classifier(ex, model_wrapper, classifier, comp_id, cls_threshold)
-        res_dyn["acc"] = accuracy_from_generation(res_dyn["gen_text"], ex["reference"])
-        results["dynamic"].append(res_dyn)
-
-        print(f"[{i+1}] static_acc={res_static['acc']} dyn_acc={res_dyn['acc']} "
-              f"static_kv={res_static['kv_est']} dyn_kv={res_dyn['kv_est']} "
-              f"comps: static={res_static['comp_count']} dyn={res_dyn['comp_count']}")
-
-    # Aggregate metrics
-    def summarize(arr):
-        if len(arr) == 0:
-            return {}
-        return {
-            "accuracy_mean": float(np.mean([x["acc"] for x in arr])),
-            "latency_mean": float(np.mean([x["latency"] for x in arr])),
-            "kv_mean": float(np.mean([x["kv_est"] for x in arr])),
-            "comp_mean": float(np.mean([x["comp_count"] for x in arr]))
-        }
-
-    summary = {"static": summarize(results["static"]), "dynamic": summarize(results["dynamic"])}
-    return {"per_example": results, "summary": summary}
-
-def main(CCM_model_path: str, classifier_model_path: str, data_path: str = None, seed: int = 42):
-    """Evaluate compression performance with static and dynamic classifiers.
+        
+        # ===== DECIDE IF WE SHOULD INSERT COMP =====
+        should_insert_comp = False
+        
+        if use_classifier and classifier is not None:
+            # OURS: Use classifier to predict compression
+            if outputs.hidden_states is not None:
+                hidden_states = outputs.hidden_states[-1][:, -1, :]  # Last layer, last token
+                comp_prob = classifier.predict(hidden_states).item()
+                should_insert_comp = comp_prob >= threshold
+        else:
+            # Baseline: Insert after newline token
+            should_insert_comp = (next_token.item() == newline_token_id)
+        
+        # Insert COMP token if needed
+        if should_insert_comp:
+            comp_token = torch.tensor([[comp_token_id]], device=device)
+            generated_ids = torch.cat([generated_ids, comp_token], dim=1)
+            comp_positions.append(generated_ids.shape[1] - 1)
+            comp_count += 1
+            
+            # Update past_key_values for COMP token (simplified: just process it)
+            with torch.no_grad():
+                comp_outputs = model(
+                    input_ids=comp_token,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                    return_dict=True
+                )
+            past_key_values = comp_outputs.past_key_values
     
-    Args:
-        CCM_model_path: Path to the trained CCM model (e.g., outputs/baseline)
-        classifier_model_path: Path to the trained classifier (e.g., outputs/classifier)
-        data_path: Path to evaluation dataset JSON file
-        seed: Random seed for reproducibility
-    
-    TODO:
-        - Load dataset from data_path or use provided dataset
-        - Initialize CCM_model using appropriate wrapper
-        - Define COMP_TOKEN_ID based on tokenizer
-        - Implement model_wrapper with required interface (.generate, .forward, etc.)
+    return generated_ids, comp_count, comp_positions
+
+
+def estimate_kv_cache(seq_len, model):
+    """Estimate KV cache size in MB."""
+    num_layers = model.config.num_hidden_layers
+    hidden_size = model.config.hidden_size
+    # KV cache: 2 * num_layers * seq_len * hidden_size * 2 bytes (float16)
+    kv_bytes = 2 * num_layers * seq_len * hidden_size * 2
+    return kv_bytes / (1024 * 1024)  # Convert to MB
+
+
+def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_token_id,
+             classifier_threshold=0.5, max_new_tokens=256, device='cuda'):
     """
-    # Set random seed
-    seed_all(seed)
+    Online evaluation comparing static baseline vs dynamic classifier.
+    """
+    static_results = []
+    dynamic_results = []
     
-    # Load classifier config and model
-    config_path = os.path.join(classifier_model_path, ".hydra", "config.yaml")
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(
-            f"Config file not found at {config_path}. "
-            f"Expected Hydra config in {classifier_model_path}/.hydra/"
+    for i, sample in enumerate(test_dataset):
+        # Extract question and ground truth answer using GSM8K utilities
+        gt_answer = extract_gsm8k_answer(sample)
+        question = sample.get('question', '')
+        
+        # Tokenize input
+        input_ids = tokenizer.encode(question, return_tensors='pt').to(device)
+        
+        # ===== STATIC BASELINE: Insert COMP after newline =====
+        t0 = time.time()
+        static_gen_ids, static_comp_count, _ = generate_with_compression(
+            model, tokenizer, input_ids, classifier=None, 
+            comp_token_id=comp_token_id,
+            newline_token_id=newline_token_id,
+            use_classifier=False,
+            max_new_tokens=max_new_tokens,
+            device=device
         )
-    
-    configs = OmegaConf.load(config_path)
-    
-    # Initialize tokenizer
-    tokenizer = create_tokenizer(configs)
-    
-    # Load classifier model
-    hidden_size = AutoConfig.from_pretrained(
-        configs.model_args.model_name_or_path
-    ).hidden_size
-    classifier = CompressionClassifier(
-        hidden_size=hidden_size,
-        dropout=configs.classifier_args.dropout if hasattr(configs, 'classifier_args') else 0.1
-    )
-    classifier.load_classifier(classifier_model_path)
-    classifier.eval()
-    
-    # TODO: Load dataset
-    # If data_path is provided, load from file:
-    # from src.data_module.load_data import load_gsm8k_compressed
-    # dataset = load_gsm8k_compressed(data_path, train_dev_test_split_ratio=[0.8, 0.1, 0.1], seed=seed)
-    # dataset = dataset['test']  # Use test split for evaluation
-    dataset = None  # Placeholder
-    
-    # TODO: Initialize CCM model and model_wrapper
-    # CCM_model = load_model(configs)  # or appropriate loading mechanism
-    # model_wrapper = ModelWrapper(model=CCM_model, tokenizer=tokenizer)
-    CCM_model = None
-    model_wrapper = None
-    COMP_TOKEN_ID = None  # Define based on tokenizer or config
-    
-    if dataset is None or model_wrapper is None or COMP_TOKEN_ID is None:
-        raise NotImplementedError(
-            "Please implement: dataset loading, model initialization, and COMP_TOKEN_ID definition"
+        static_latency = time.time() - t0
+        static_kv_cache = estimate_kv_cache(static_gen_ids.shape[1], model)
+        
+        static_text = tokenizer.decode(static_gen_ids[0], skip_special_tokens=False)
+        static_acc = verify_gsm8k_answer(gt_answer, static_text)
+        
+        static_results.append({
+            'comp_count': static_comp_count,
+            'kv_cache_mb': static_kv_cache,
+            'latency': static_latency,
+            'accuracy': static_acc
+        })
+        
+        # ===== DYNAMIC: Use classifier to decide COMP insertion =====
+        t0 = time.time()
+        dynamic_gen_ids, dynamic_comp_count, _ = generate_with_compression(
+            model, tokenizer, input_ids, classifier=classifier,
+            comp_token_id=comp_token_id,
+            newline_token_id=newline_token_id,
+            use_classifier=True,
+            threshold=classifier_threshold,
+            max_new_tokens=max_new_tokens,
+            device=device
         )
+        dynamic_latency = time.time() - t0
+        dynamic_kv_cache = estimate_kv_cache(dynamic_gen_ids.shape[1], model)
+        
+        dynamic_text = tokenizer.decode(dynamic_gen_ids[0], skip_special_tokens=False)
+        dynamic_acc = verify_gsm8k_answer(gt_answer, dynamic_text)
+        
+        dynamic_results.append({
+            'comp_count': dynamic_comp_count,
+            'kv_cache_mb': dynamic_kv_cache,
+            'latency': dynamic_latency,
+            'accuracy': dynamic_acc
+        })
+        
+        if (i + 1) % 10 == 0:
+            print(f"Processed {i+1}/{len(test_dataset)}")
     
-    results = evaluate(
-        dataset=dataset,
-        model_wrapper=model_wrapper,
-        classifier=classifier,
-        comp_id=COMP_TOKEN_ID,
-        static_interval=128,
-        cls_threshold=0.5,
-        max_examples=100
-    )
+    # Compute aggregate metrics
+    return {
+        'static': {
+            'avg_comp_tokens': np.mean([r['comp_count'] for r in static_results]),
+            'avg_kv_cache_mb': np.mean([r['kv_cache_mb'] for r in static_results]),
+            'avg_latency': np.mean([r['latency'] for r in static_results]),
+            'accuracy': np.mean([r['accuracy'] for r in static_results]),
+            'total_examples': len(static_results)
+        },
+        'dynamic': {
+            'avg_comp_tokens': np.mean([r['comp_count'] for r in dynamic_results]),
+            'avg_kv_cache_mb': np.mean([r['kv_cache_mb'] for r in dynamic_results]),
+            'avg_latency': np.mean([r['latency'] for r in dynamic_results]),
+            'accuracy': np.mean([r['accuracy'] for r in dynamic_results]),
+            'total_examples': len(dynamic_results)
+        }
+    }
 
-    print("Summary metrics:", results["summary"])
 
 if __name__ == "__main__":
-    # Directory paths for baseline and compression probe models. E.g. outputs/classifier stores .hydra and compression_classifier.pt
-    main(CCM_model_path="outputs/baseline", classifier_model_path="outputs/classifier")
+    import argparse
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--test_dataset', type=str, required=True, default='data/gsm-test-200.json',help='Path to test JSON file')
+    parser.add_argument('--classifier_path', type=str, default='outputs/classifier/compression_classifier.pt', help='Path to classifier checkpoint')
+    parser.add_argument('--model', type=str, default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur', help='Path to model (local) or HF model ID')
+    parser.add_argument('--threshold', type=float, default=0.5, help='Classifier threshold for COMP insertion')
+    parser.add_argument('--max_new_tokens', type=int, default=256, help='Max tokens to generate')
+    parser.add_argument('--device', type=str, default='cuda')
+    args = parser.parse_args()
+    
+    # Load data
+    with open(args.test_dataset) as f:
+        test_data = json.load(f)
+    
+    # Load model and tokenizer
+    print(f"Loading model {args.model}...")
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, 
+        torch_dtype=torch.float16, 
+        device_map='auto',
+        trust_remote_code=True
+    )
+    model.eval()
+    
+    # Add COMP token if not present
+    if '<COMP>' not in tokenizer.get_vocab():
+        tokenizer.add_special_tokens({'additional_special_tokens': ['<COMP>']})
+        model.resize_token_embeddings(len(tokenizer))
+    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP>')
+    
+    # Get newline token ID
+    newline_token_id = tokenizer.convert_tokens_to_ids('\n')
+    print(f"COMP token ID: {comp_token_id}")
+    print(f"Newline token ID: {newline_token_id}")
+    
+    # Load classifier
+    print(f"Loading classifier from {args.classifier_path}...")
+    classifier = CompressionClassifier(hidden_size=model.config.hidden_size, dropout=0.1)
+    classifier.load_state_dict(torch.load(args.classifier_path, map_location=args.device))
+    classifier.eval()
+    classifier = classifier.to(args.device)
+    
+    # Run evaluation
+    print(f"Evaluating on {len(test_data)} examples...")
+    results = evaluate(
+        test_data, model, tokenizer, classifier, 
+        comp_token_id=comp_token_id,
+        newline_token_id=newline_token_id,
+        classifier_threshold=args.threshold,
+        max_new_tokens=args.max_new_tokens,
+        device=args.device
+    )
+    
+    # Print results
+    print("\n" + "="*70)
+    print("EVALUATION RESULTS")
+    print("="*70)
+    
+    print(f"\nStatic Baseline (insert after newline):")
+    print(f"  Accuracy:           {results['static']['accuracy']:.2%}")
+    print(f"  Avg COMP tokens:    {results['static']['avg_comp_tokens']:.2f}")
+    print(f"  KV Cache (MB):      {results['static']['avg_kv_cache_mb']:.2f}")
+    print(f"  Latency (s):        {results['static']['avg_latency']:.3f}")
+    
+    print(f"\nDynamic Classifier (threshold={args.threshold}):")
+    print(f"  Accuracy:           {results['dynamic']['accuracy']:.2%}")
+    print(f"  Avg COMP tokens:    {results['dynamic']['avg_comp_tokens']:.2f}")
+    print(f"  KV Cache (MB):      {results['dynamic']['avg_kv_cache_mb']:.2f}")
+    print(f"  Latency (s):        {results['dynamic']['avg_latency']:.3f}")
+    
+    print(f"\nCompression Metrics:")
+    if results['static']['avg_comp_tokens'] > 0:
+        comp_reduction = (results['static']['avg_comp_tokens'] - results['dynamic']['avg_comp_tokens']) / results['static']['avg_comp_tokens']
+        kv_reduction = (results['static']['avg_kv_cache_mb'] - results['dynamic']['avg_kv_cache_mb']) / results['static']['avg_kv_cache_mb']
+        speedup = results['static']['avg_latency'] / results['dynamic']['avg_latency'] if results['dynamic']['avg_latency'] > 0 else 1.0
+        print(f"  COMP token reduction: {comp_reduction:.2%}")
+        print(f"  KV cache reduction:   {kv_reduction:.2%}")
+        print(f"  Latency speedup:      {speedup:.2f}x")
+    
+    # Save results
+    with open("eval_results.json", "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nResults saved to eval_results.json")
