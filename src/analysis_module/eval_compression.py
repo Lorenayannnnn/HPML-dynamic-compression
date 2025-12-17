@@ -6,6 +6,7 @@ Follows CCM inference pattern with streaming COMP token insertion.
 
 import sys
 from pathlib import Path
+from sqlite3 import adapt
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -19,9 +20,10 @@ from analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answe
 import json
 import time
 from peft import PeftModel
+from tqdm import tqdm
 
 def generate_with_compression(model, tokenizer, input_ids, classifier, comp_token_id,
-                             newline_token_id, use_classifier=True, threshold=0.5,
+                             newline_token_id_list, use_classifier=True, threshold=0.5,
                              max_new_tokens=256, device='cuda'):
     """
     Generate tokens online, inserting COMP tokens based on strategy.
@@ -82,21 +84,21 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
         else:
             # Baseline: Insert after newline token
             # Check if the next token is also newline; if yes, insert COMP after the second newline
-            if next_token.item() == newline_token_id:
+            if next_token.item() in newline_token_id_list:
                 should_insert_comp = True
-                # Peek at the next token logits
-                with torch.no_grad():
-                    peek_outputs = model(
-                        input_ids=generated_ids[:, -1:],
-                        past_key_values=past_key_values,
-                        use_cache=True,
-                        return_dict=True
-                    )
-                peek_logits = peek_outputs.logits[:, -1, :]
-                peek_next_token = torch.argmax(peek_logits, dim=-1, keepdim=True)
-                if peek_next_token.item() == newline_token_id:
-                    generated_ids = torch.cat([generated_ids, peek_next_token], dim=1)
-                    should_insert_comp = True
+                # # Peek at the next token logits
+                # with torch.no_grad():
+                #     peek_outputs = model(
+                #         input_ids=generated_ids[:, -1:],
+                #         past_key_values=past_key_values,
+                #         use_cache=True,
+                #         return_dict=True
+                #     )
+                # peek_logits = peek_outputs.logits[:, -1, :]
+                # peek_next_token = torch.argmax(peek_logits, dim=-1, keepdim=True)
+                # if peek_next_token.item() == newline_token_id:
+                #     generated_ids = torch.cat([generated_ids, peek_next_token], dim=1)
+                #     should_insert_comp = True
 
         # Insert COMP token if needed
         if should_insert_comp:
@@ -130,7 +132,7 @@ def estimate_kv_cache(seq_len, model):
     return kv_bytes / (1024 * 1024)  # Convert to MB
 
 
-def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_token_id, do_baseline,
+def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_token_id_list, do_baseline,
              classifier_threshold=0.5, max_new_tokens=256, device='cuda'):
     """
     Online evaluation comparing static baseline vs dynamic classifier.
@@ -138,7 +140,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
 
     return_results = []
 
-    for i, sample in enumerate(test_dataset):
+    for i, sample in tqdm(enumerate(test_dataset)):
         # Extract question and ground truth answer using GSM8K utilities
         gt_answer = extract_gsm8k_answer(sample)
         question = sample.get('question', '')
@@ -152,7 +154,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
             static_gen_ids, static_comp_count, _ = generate_with_compression(
                 model, tokenizer, input_ids, classifier=None,
                 comp_token_id=comp_token_id,
-                newline_token_id=newline_token_id,
+                newline_token_id_list=newline_token_id_list,
                 use_classifier=False,
                 max_new_tokens=max_new_tokens,
                 device=device
@@ -176,7 +178,7 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
             dynamic_gen_ids, dynamic_comp_count, _ = generate_with_compression(
                 model, tokenizer, input_ids, classifier=classifier,
                 comp_token_id=comp_token_id,
-                newline_token_id=newline_token_id,
+                newline_token_id_list=newline_token_id_list,
                 use_classifier=True,
                 threshold=classifier_threshold,
                 max_new_tokens=max_new_tokens,
@@ -286,9 +288,12 @@ if __name__ == "__main__":
     comp_token_id = tokenizer.convert_tokens_to_ids('<COMP0>')
 
     # Get newline token ID
-    newline_token_id = tokenizer.convert_tokens_to_ids('\n')
+    newline_token_id_list = [
+        tokenizer.encode('\n', add_special_tokens=False)[0],
+        tokenizer.encode('\n\n', add_special_tokens=False)[0]
+    ]
     print(f"COMP token ID: {comp_token_id}")
-    print(f"Newline token ID: {newline_token_id}")
+    print(f"newline_token_id_list: {newline_token_id_list}")
 
     # Load classifier
     print(f"Loading classifier from {args.classifier_path}...")
@@ -314,7 +319,7 @@ if __name__ == "__main__":
         test_data, baseline_base_model, tokenizer, classifier=None,
         do_baseline=True,
         comp_token_id=comp_token_id,
-        newline_token_id=newline_token_id,
+        newline_token_id_list=newline_token_id_list,
         classifier_threshold=args.threshold,
         max_new_tokens=args.max_new_tokens,
         device=args.device,
