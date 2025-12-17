@@ -4,14 +4,20 @@ Compares static baseline vs. dynamic classifier-based compression during generat
 Follows CCM inference pattern with streaming COMP token insertion.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import torch
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from src.model_module.compression_classifier import CompressionClassifier
-from src.analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
+from model_module.compression_classifier import CompressionClassifier
+from analysis_module.gsm8k_utils import extract_gsm8k_answer, verify_gsm8k_answer
 import json
 import time
-
+from peft import PeftModel
 
 def generate_with_compression(model, tokenizer, input_ids, classifier, comp_token_id, 
                              newline_token_id, use_classifier=True, threshold=0.5, 
@@ -213,14 +219,25 @@ if __name__ == "__main__":
         test_data = json.load(f)
     
     # Load model and tokenizer
-    print(f"Loading model {args.model}...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    base_model = "meta-llama/Llama-3.1-8B-Instruct"
+
+    print(f"Loading base model {base_model} and applying PEFT adapter {args.model}...")
+    tokenizer = AutoTokenizer.from_pretrained(base_model, use_auth_token=True, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model, 
-        torch_dtype=torch.float16, 
-        device_map='auto',
-        trust_remote_code=True
+
+    base_model_obj = AutoModelForCausalLM.from_pretrained(
+        base_model,
+        torch_dtype=torch.float16,
+        device_map="auto",
+        trust_remote_code=True,
+        use_auth_token=True,
+    )
+
+    # Load your PEFT adapter
+    model = PeftModel.from_pretrained(
+        base_model_obj,
+        args.model,
+        device_map="auto",
     )
     model.eval()
     
@@ -238,7 +255,7 @@ if __name__ == "__main__":
     # Load classifier
     print(f"Loading classifier from {args.classifier_path}...")
     classifier = None
-    if args.do_baseline:
+    if not args.do_baseline:
         classifier = CompressionClassifier(hidden_size=model.config.hidden_size, dropout=0.1)
         classifier.load_state_dict(torch.load(args.classifier_path, map_location=args.device))
         classifier.eval()
@@ -255,34 +272,78 @@ if __name__ == "__main__":
         max_new_tokens=args.max_new_tokens,
         device=args.device,
     )
-    
-    # Print results
-    print("\n" + "="*70)
+
+    print("\nRunning STATIC baseline evaluation...")
+    baseline_results = evaluate(
+        test_data, model, tokenizer, classifier=None,
+        do_baseline=True,
+        comp_token_id=comp_token_id,
+        newline_token_id=newline_token_id,
+        classifier_threshold=args.threshold,
+        max_new_tokens=args.max_new_tokens,
+        device=args.device,
+    )
+
+    print("\nRunning DYNAMIC classifier evaluation...")
+    dynamic_results = evaluate(
+        test_data, model, tokenizer, classifier=classifier,
+        do_baseline=False,
+        comp_token_id=comp_token_id,
+        newline_token_id=newline_token_id,
+        classifier_threshold=args.threshold,
+        max_new_tokens=args.max_new_tokens,
+        device=args.device,
+    )
+
+    def print_results(title, r):
+        print(f"\n{title}")
+        print("-" * len(title))
+        print(f"Accuracy:        {r['accuracy']:.2%}")
+        print(f"Avg COMP tokens: {r['avg_comp_tokens']:.2f}")
+        print(f"KV Cache (MB):   {r['avg_kv_cache_mb']:.2f}")
+        print(f"Latency (s):     {r['avg_latency']:.3f}")
+        print(f"Examples:        {r['total_examples']}")
+
+    print("\n" + "=" * 70)
     print("EVALUATION RESULTS")
-    print("="*70)
-    
-    print(f"\nStatic Baseline (insert after newline):")
-    print(f"  Accuracy:           {results['static']['accuracy']:.2%}")
-    print(f"  Avg COMP tokens:    {results['static']['avg_comp_tokens']:.2f}")
-    print(f"  KV Cache (MB):      {results['static']['avg_kv_cache_mb']:.2f}")
-    print(f"  Latency (s):        {results['static']['avg_latency']:.3f}")
-    
-    print(f"\nDynamic Classifier (threshold={args.threshold}):")
-    print(f"  Accuracy:           {results['dynamic']['accuracy']:.2%}")
-    print(f"  Avg COMP tokens:    {results['dynamic']['avg_comp_tokens']:.2f}")
-    print(f"  KV Cache (MB):      {results['dynamic']['avg_kv_cache_mb']:.2f}")
-    print(f"  Latency (s):        {results['dynamic']['avg_latency']:.3f}")
-    
-    print(f"\nCompression Metrics:")
-    if results['static']['avg_comp_tokens'] > 0:
-        comp_reduction = (results['static']['avg_comp_tokens'] - results['dynamic']['avg_comp_tokens']) / results['static']['avg_comp_tokens']
-        kv_reduction = (results['static']['avg_kv_cache_mb'] - results['dynamic']['avg_kv_cache_mb']) / results['static']['avg_kv_cache_mb']
-        speedup = results['static']['avg_latency'] / results['dynamic']['avg_latency'] if results['dynamic']['avg_latency'] > 0 else 1.0
-        print(f"  COMP token reduction: {comp_reduction:.2%}")
-        print(f"  KV cache reduction:   {kv_reduction:.2%}")
-        print(f"  Latency speedup:      {speedup:.2f}x")
-    
-    # Save results
+    print("=" * 70)
+
+    print_results("Static Baseline (newline-based)", baseline_results)
+    print_results(f"Dynamic Classifier (threshold={args.threshold})", dynamic_results)
+
+    print("\n" + "=" * 70)
+    print("COMPRESSION GAINS")
+    print("=" * 70)
+
+    if baseline_results['avg_comp_tokens'] > 0:
+        comp_reduction = (
+            baseline_results['avg_comp_tokens']
+            - dynamic_results['avg_comp_tokens']
+        ) / baseline_results['avg_comp_tokens']
+
+        kv_reduction = (
+            baseline_results['avg_kv_cache_mb']
+            - dynamic_results['avg_kv_cache_mb']
+        ) / baseline_results['avg_kv_cache_mb']
+
+        speedup = (
+            baseline_results['avg_latency']
+            / dynamic_results['avg_latency']
+            if dynamic_results['avg_latency'] > 0 else 1.0
+        )
+
+        print(f"COMP token reduction: {comp_reduction:.2%}")
+        print(f"KV cache reduction:   {kv_reduction:.2%}")
+        print(f"Latency speedup:      {speedup:.2f}×")
+
     with open("eval_results.json", "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"\nResults saved to eval_results.json")
+        json.dump(
+            {
+                "baseline": baseline_results,
+                "dynamic": dynamic_results,
+                "threshold": args.threshold,
+            },
+            f,
+            indent=2,
+        )
+
