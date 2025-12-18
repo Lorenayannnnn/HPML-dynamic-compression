@@ -29,8 +29,11 @@ from peft import PeftModel
 from tqdm import tqdm
 
 # Import extract_comp_results from CCM for actual KV compression
-CCM_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Context-Memory"))
+CCM_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "Context-Memory")
+)
 extract_comp_results = None
+
 
 def _import_ccm_extract():
     """Import extract_comp_results from CCM."""
@@ -39,13 +42,14 @@ def _import_ccm_extract():
     # Save main project's src modules
     saved_modules = {}
     for key in list(sys.modules.keys()):
-        if key == 'src' or key.startswith('src.'):
+        if key == "src" or key.startswith("src."):
             saved_modules[key] = sys.modules.pop(key)
 
     sys.path.insert(0, CCM_PATH)
 
     try:
         from src.utils import extract_comp_results as _extract_comp_results
+
         extract_comp_results = _extract_comp_results
         print("Successfully imported extract_comp_results from CCM")
         return True
@@ -55,6 +59,7 @@ def _import_ccm_extract():
     finally:
         # We keep CCM's src in sys.modules since we need it for extraction
         pass
+
 
 # Try to import CCM's extract function
 _ccm_import_success = _import_ccm_extract()
@@ -92,7 +97,9 @@ def _extract_sink_and_comp(past_kv, sink_positions, comp_positions, kv_len, devi
     return extract_comp_results(past_kv, keep_tensor)
 
 
-def generate_no_compression(model, tokenizer, input_ids, max_new_tokens=256, device='cuda'):
+def generate_no_compression(
+    model, tokenizer, input_ids, max_new_tokens=256, device="cuda"
+):
     """
     Generate tokens without any compression (vanilla LLM baseline).
     No COMP tokens are inserted.
@@ -145,9 +152,19 @@ def generate_no_compression(model, tokenizer, input_ids, max_new_tokens=256, dev
     return generated_ids, 0, actual_kv_size
 
 
-def generate_with_compression(model, tokenizer, input_ids, classifier, comp_token_id,
-                             newline_token_id_list, use_classifier=True, threshold=0.5,
-                             max_new_tokens=256, device='cuda', compress_kv=False):
+def generate_with_compression(
+    model,
+    tokenizer,
+    input_ids,
+    classifier,
+    comp_token_id,
+    newline_token_id_list,
+    use_classifier=True,
+    threshold=0.5,
+    max_new_tokens=256,
+    device="cuda",
+    compress_kv=False,
+):
     """
     Generate tokens online, inserting COMP tokens based on strategy.
     Follows CCM inference pattern with proper pos_id_offset tracking.
@@ -204,7 +221,9 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
 
         # Append generated token
         generated_ids = torch.cat([generated_ids, next_token], dim=1)
-        pos_id_offset += curr_input_ids.shape[-1]  # Increment by current input length only
+        pos_id_offset += curr_input_ids.shape[
+            -1
+        ]  # Increment by current input length only
 
         # Check for EOS
         if next_token.item() == tokenizer.eos_token_id:
@@ -216,8 +235,12 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
         if use_classifier and classifier is not None:
             # OURS: Use classifier to predict compression
             if outputs.hidden_states is not None:
-                hidden_states = outputs.hidden_states[-1][:, -1:, :]  # Last layer, last token, shape: (batch_size, 1, hidden_size)
-                comp_prob = classifier.predict(hidden_states)[0, 0].item()  # Get probability for first batch, first (and only) token
+                hidden_states = outputs.hidden_states[-1][
+                    :, -1:, :
+                ]  # Last layer, last token, shape: (batch_size, 1, hidden_size)
+                comp_prob = classifier.predict(hidden_states)[
+                    0, 0
+                ].item()  # Get probability for first batch, first (and only) token
                 should_insert_comp = comp_prob >= threshold
         else:
             # Baseline: Insert after newline token
@@ -268,11 +291,7 @@ def generate_with_compression(model, tokenizer, input_ids, classifier, comp_toke
                 all_comp_positions = comp_positions_in_kv + [current_comp_pos]
 
                 past_key_values = _extract_sink_and_comp(
-                    past_key_values,
-                    sink_positions,
-                    all_comp_positions,
-                    kv_len,
-                    device
+                    past_key_values, sink_positions, all_comp_positions, kv_len, device
                 )
 
                 # After extraction, update tracked positions:
@@ -325,12 +344,23 @@ def estimate_kv_cache(generated_ids, comp_token_id, model):
 
     max_seq = max(max_seq, curr_seq)
     kv_bytes = 2 * num_layers * max_seq * hidden_size * 2
-    return kv_bytes / (1024 * 1024) 
+    return kv_bytes / (1024 * 1024)
 
 
-def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_token_id_list, do_baseline,
-             classifier_threshold=0.5, max_new_tokens=256, device='cuda', compress_kv=False,
-             no_compression=False):
+def evaluate(
+    test_dataset,
+    model,
+    tokenizer,
+    classifier,
+    comp_token_id,
+    newline_token_id_list,
+    do_baseline,
+    classifier_threshold=0.5,
+    max_new_tokens=256,
+    device="cuda",
+    compress_kv=False,
+    no_compression=False,
+):
     """
     Online evaluation comparing static baseline vs dynamic classifier.
 
@@ -356,17 +386,19 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
     for i, sample in tqdm(enumerate(test_dataset), total=len(test_dataset)):
         # Extract question and ground truth answer using GSM8K utilities
         gt_answer = extract_gsm8k_answer(sample)
-        question = sample.get('question', '')
+        question = sample.get("question", "")
 
         # Tokenize input
-        input_ids = tokenizer.encode(question, return_tensors='pt').to(device)
+        input_ids = tokenizer.encode(question, return_tensors="pt").to(device)
         input_tokens = input_ids.shape[1]
 
         if no_compression:
             # ===== NO COMPRESSION: Vanilla LLM without any COMP tokens =====
             t0 = time.time()
             gen_ids, comp_count, kv_bytes = generate_no_compression(
-                model, tokenizer, input_ids,
+                model,
+                tokenizer,
+                input_ids,
                 max_new_tokens=max_new_tokens,
                 device=device,
             )
@@ -375,7 +407,10 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
             # ===== STATIC BASELINE: Insert COMP after newline =====
             t0 = time.time()
             gen_ids, comp_count, kv_bytes = generate_with_compression(
-                model, tokenizer, input_ids, classifier=None,
+                model,
+                tokenizer,
+                input_ids,
+                classifier=None,
                 comp_token_id=comp_token_id,
                 newline_token_id_list=newline_token_id_list,
                 use_classifier=False,
@@ -388,7 +423,10 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
             # ===== DYNAMIC: Use classifier to decide COMP insertion =====
             t0 = time.time()
             gen_ids, comp_count, kv_bytes = generate_with_compression(
-                model, tokenizer, input_ids, classifier=classifier,
+                model,
+                tokenizer,
+                input_ids,
+                classifier=classifier,
                 comp_token_id=comp_token_id,
                 newline_token_id_list=newline_token_id_list,
                 use_classifier=True,
@@ -414,57 +452,69 @@ def evaluate(test_dataset, model, tokenizer, classifier, comp_token_id, newline_
 
         # Extract predicted answer from generated text
         predicted_answer = None
-        if '####' in generated_text:
+        if "####" in generated_text:
             try:
-                predicted_answer = generated_text.split('####')[-1].strip().split()[0]
+                predicted_answer = generated_text.split("####")[-1].strip().split()[0]
             except:
                 pass
 
         # Save comprehensive per-sample metadata
-        per_sample_results.append({
-            # Identification
-            'sample_id': i,
-            # Input
-            'question': question,
-            'input_tokens': input_tokens,
-            # Ground truth
-            'gt_answer': gt_answer,
-            # Generation output
-            'generated_text': generated_text,
-            'predicted_answer': predicted_answer,
-            'tokens_generated': tokens_generated,
-            # Accuracy
-            'is_correct': is_correct,
-            # Compression metrics
-            'comp_tokens_inserted': comp_count,
-            'kv_cache_mb': kv_cache_mb,
-            # Performance metrics
-            'latency_seconds': latency,
-            'throughput_tokens_per_sec': throughput,
-        })
+        per_sample_results.append(
+            {
+                # Identification
+                "sample_id": i,
+                # Input
+                "question": question,
+                "input_tokens": input_tokens,
+                # Ground truth
+                "gt_answer": gt_answer,
+                # Generation output
+                "generated_text": generated_text,
+                "predicted_answer": predicted_answer,
+                "tokens_generated": tokens_generated,
+                # Accuracy
+                "is_correct": is_correct,
+                # Compression metrics
+                "comp_tokens_inserted": comp_count,
+                "kv_cache_mb": kv_cache_mb,
+                # Performance metrics
+                "latency_seconds": latency,
+                "throughput_tokens_per_sec": throughput,
+            }
+        )
 
         if (i + 1) % 10 == 0:
-            print(f"Processed {i+1}/{len(test_dataset)}")
+            print(f"Processed {i + 1}/{len(test_dataset)}")
 
     # Compute aggregate metrics
     aggregate_metrics = {
-        'total_examples': len(per_sample_results),
-        'accuracy': np.mean([r['is_correct'] for r in per_sample_results]),
-        'avg_comp_tokens': np.mean([r['comp_tokens_inserted'] for r in per_sample_results]),
-        'std_comp_tokens': np.std([r['comp_tokens_inserted'] for r in per_sample_results]),
-        'avg_kv_cache_mb': np.mean([r['kv_cache_mb'] for r in per_sample_results]),
-        'std_kv_cache_mb': np.std([r['kv_cache_mb'] for r in per_sample_results]),
-        'avg_latency': np.mean([r['latency_seconds'] for r in per_sample_results]),
-        'std_latency': np.std([r['latency_seconds'] for r in per_sample_results]),
-        'avg_throughput': np.mean([r['throughput_tokens_per_sec'] for r in per_sample_results]),
-        'avg_tokens_generated': np.mean([r['tokens_generated'] for r in per_sample_results]),
-        'total_time_seconds': sum([r['latency_seconds'] for r in per_sample_results]),
+        "total_examples": len(per_sample_results),
+        "accuracy": np.mean([r["is_correct"] for r in per_sample_results]),
+        "avg_comp_tokens": np.mean(
+            [r["comp_tokens_inserted"] for r in per_sample_results]
+        ),
+        "std_comp_tokens": np.std(
+            [r["comp_tokens_inserted"] for r in per_sample_results]
+        ),
+        "avg_kv_cache_mb": np.mean([r["kv_cache_mb"] for r in per_sample_results]),
+        "std_kv_cache_mb": np.std([r["kv_cache_mb"] for r in per_sample_results]),
+        "avg_latency": np.mean([r["latency_seconds"] for r in per_sample_results]),
+        "std_latency": np.std([r["latency_seconds"] for r in per_sample_results]),
+        "avg_throughput": np.mean(
+            [r["throughput_tokens_per_sec"] for r in per_sample_results]
+        ),
+        "avg_tokens_generated": np.mean(
+            [r["tokens_generated"] for r in per_sample_results]
+        ),
+        "total_time_seconds": sum([r["latency_seconds"] for r in per_sample_results]),
     }
 
     return aggregate_metrics, per_sample_results
 
 
-def compare_models(baseline_output_fn, dynamic_output_fn, output_fn="outputs/comparison_results.json"):
+def compare_models(
+    baseline_output_fn, dynamic_output_fn, output_fn="outputs/comparison_results.json"
+):
     """Compare baseline and dynamic model results."""
     print("\n" + "=" * 70)
     print("COMPRESSION COMPARISON: BASELINE vs DYNAMIC")
@@ -476,53 +526,57 @@ def compare_models(baseline_output_fn, dynamic_output_fn, output_fn="outputs/com
         dynamic_data = json.load(f)
 
     # Handle both old and new format
-    if 'aggregate_metrics' in baseline_data:
-        baseline_metrics = baseline_data['aggregate_metrics']
-        baseline_config = baseline_data.get('config', {})
+    if "aggregate_metrics" in baseline_data:
+        baseline_metrics = baseline_data["aggregate_metrics"]
+        baseline_config = baseline_data.get("config", {})
     else:
-        baseline_metrics = baseline_data.get('results', baseline_data)
+        baseline_metrics = baseline_data.get("results", baseline_data)
         baseline_config = {}
 
-    if 'aggregate_metrics' in dynamic_data:
-        dynamic_metrics = dynamic_data['aggregate_metrics']
-        dynamic_config = dynamic_data.get('config', {})
-        threshold = dynamic_config.get('threshold', 0.5)
+    if "aggregate_metrics" in dynamic_data:
+        dynamic_metrics = dynamic_data["aggregate_metrics"]
+        dynamic_config = dynamic_data.get("config", {})
+        threshold = dynamic_config.get("threshold", 0.5)
     else:
-        dynamic_metrics = dynamic_data.get('results', dynamic_data)
-        threshold = dynamic_data.get('threshold', 0.5)
+        dynamic_metrics = dynamic_data.get("results", dynamic_data)
+        threshold = dynamic_data.get("threshold", 0.5)
 
     # Print comparison table
     print(f"\n{'Metric':<30} {'Baseline':>15} {'Dynamic':>15} {'Diff':>15}")
     print("-" * 75)
 
     # Accuracy
-    b_acc = baseline_metrics.get('accuracy', 0)
-    d_acc = dynamic_metrics.get('accuracy', 0)
-    print(f"{'Accuracy':<30} {b_acc:>14.1%} {d_acc:>14.1%} {(d_acc-b_acc):>+14.1%}")
+    b_acc = baseline_metrics.get("accuracy", 0)
+    d_acc = dynamic_metrics.get("accuracy", 0)
+    print(f"{'Accuracy':<30} {b_acc:>14.1%} {d_acc:>14.1%} {(d_acc - b_acc):>+14.1%}")
 
     # COMP tokens
-    b_comp = baseline_metrics.get('avg_comp_tokens', 0)
-    d_comp = dynamic_metrics.get('avg_comp_tokens', 0)
+    b_comp = baseline_metrics.get("avg_comp_tokens", 0)
+    d_comp = dynamic_metrics.get("avg_comp_tokens", 0)
     comp_diff = ((d_comp - b_comp) / b_comp * 100) if b_comp > 0 else 0
-    print(f"{'Avg COMP Tokens':<30} {b_comp:>15.2f} {d_comp:>15.2f} {comp_diff:>+14.1f}%")
+    print(
+        f"{'Avg COMP Tokens':<30} {b_comp:>15.2f} {d_comp:>15.2f} {comp_diff:>+14.1f}%"
+    )
 
     # KV Cache
-    b_kv = baseline_metrics.get('avg_kv_cache_mb', 0)
-    d_kv = dynamic_metrics.get('avg_kv_cache_mb', 0)
+    b_kv = baseline_metrics.get("avg_kv_cache_mb", 0)
+    d_kv = dynamic_metrics.get("avg_kv_cache_mb", 0)
     kv_diff = ((d_kv - b_kv) / b_kv * 100) if b_kv > 0 else 0
     print(f"{'Avg KV Cache (MB)':<30} {b_kv:>15.2f} {d_kv:>15.2f} {kv_diff:>+14.1f}%")
 
     # Latency
-    b_lat = baseline_metrics.get('avg_latency', 0)
-    d_lat = dynamic_metrics.get('avg_latency', 0)
+    b_lat = baseline_metrics.get("avg_latency", 0)
+    d_lat = dynamic_metrics.get("avg_latency", 0)
     lat_diff = ((d_lat - b_lat) / b_lat * 100) if b_lat > 0 else 0
     print(f"{'Avg Latency (s)':<30} {b_lat:>15.3f} {d_lat:>15.3f} {lat_diff:>+14.1f}%")
 
     # Throughput
-    b_tput = baseline_metrics.get('avg_throughput', 0)
-    d_tput = dynamic_metrics.get('avg_throughput', 0)
+    b_tput = baseline_metrics.get("avg_throughput", 0)
+    d_tput = dynamic_metrics.get("avg_throughput", 0)
     tput_diff = ((d_tput - b_tput) / b_tput * 100) if b_tput > 0 else 0
-    print(f"{'Avg Throughput (tok/s)':<30} {b_tput:>15.1f} {d_tput:>15.1f} {tput_diff:>+14.1f}%")
+    print(
+        f"{'Avg Throughput (tok/s)':<30} {b_tput:>15.1f} {d_tput:>15.1f} {tput_diff:>+14.1f}%"
+    )
 
     print("-" * 75)
     print(f"\nDynamic classifier threshold: {threshold}")
@@ -534,7 +588,7 @@ def compare_models(baseline_output_fn, dynamic_output_fn, output_fn="outputs/com
             "metrics": baseline_metrics,
         },
         "dynamic": {
-            "config": dynamic_config if 'aggregate_metrics' in dynamic_data else {},
+            "config": dynamic_config if "aggregate_metrics" in dynamic_data else {},
             "metrics": dynamic_metrics,
         },
         "comparison": {
@@ -543,7 +597,7 @@ def compare_models(baseline_output_fn, dynamic_output_fn, output_fn="outputs/com
             "kv_cache_diff_pct": kv_diff,
             "latency_diff_pct": lat_diff,
             "throughput_diff_pct": tput_diff,
-        }
+        },
     }
 
     with open(output_fn, "w") as f:
@@ -562,14 +616,14 @@ def get_comp_and_newline_tokens(tokenizer) -> tuple:
         tuple: (comp_token_id, newline_token_id_list)
     """
     # Get COMP0 token
-    if '<COMP0>' not in tokenizer.get_vocab():
-        raise ValueError('Tokenizer vocabulary does not contain <COMP0>.')
-    comp_token_id = tokenizer.convert_tokens_to_ids('<COMP0>')
+    if "<COMP0>" not in tokenizer.get_vocab():
+        raise ValueError("Tokenizer vocabulary does not contain <COMP0>.")
+    comp_token_id = tokenizer.convert_tokens_to_ids("<COMP0>")
 
     # Get newline tokens
     newline_token_id_list = [
-        tokenizer.encode('\n', add_special_tokens=False)[0],
-        tokenizer.encode('\n\n', add_special_tokens=False)[0]
+        tokenizer.encode("\n", add_special_tokens=False)[0],
+        tokenizer.encode("\n\n", add_special_tokens=False)[0],
     ]
 
     return comp_token_id, newline_token_id_list
@@ -587,13 +641,17 @@ def main(args):
     baseline_model_path = Path(args.baseline_model).resolve()
 
     print(f"Loading PEFT adapter from {OURS_model_path}...")
-    
+
     # Load tokenizer and get special token IDs
-    tokenizer = AutoTokenizer.from_pretrained(str(OURS_model_path), trust_remote_code=True, local_files_only=True,
-                                              fix_mistral_regex=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(OURS_model_path),
+        trust_remote_code=True,
+        local_files_only=True,
+        fix_mistral_regex=True,
+    )
     tokenizer.pad_token = tokenizer.eos_token
     comp_token_id, newline_token_id_list = get_comp_and_newline_tokens(tokenizer)
-    
+
     print(f"COMP token ID: {comp_token_id}")
     print(f"newline_token_id_list: {newline_token_id_list}")
 
@@ -603,9 +661,12 @@ def main(args):
 
     compress_kv = not args.no_compress_kv
 
-    if args.method == 'compression_none':
-        print(f"\nLoading {base_model_id} (no CCM fine-tuning) for NO COMPRESSION evaluation...")
+    if args.method == "compression_none":
+        print(
+            f"\nLoading {base_model_id} (no CCM fine-tuning) for NO COMPRESSION evaluation..."
+        )
         from transformers import AutoModelForCausalLM
+
         vanilla_model = AutoModelForCausalLM.from_pretrained(
             base_model_id,
             torch_dtype=dtype,
@@ -614,7 +675,10 @@ def main(args):
 
         print(f"\nRunning NO COMPRESSION evaluation (vanilla LLM, no COMP tokens)...")
         aggregate_metrics, per_sample_results = evaluate(
-            test_data, vanilla_model, tokenizer, classifier=None,
+            test_data,
+            vanilla_model,
+            tokenizer,
+            classifier=None,
             do_baseline=False,
             comp_token_id=comp_token_id,
             newline_token_id_list=newline_token_id_list,
@@ -625,19 +689,24 @@ def main(args):
             no_compression=True,
         )
         method_name = "compression_none"
-    elif args.method == 'compression_newline':
+    elif args.method == "compression_newline":
         print(f"\nLoading baseline model with PEFT adapter...")
         baseline_model, _ = load_peft_model(
             base_model_id=base_model_id,
             adapter_path=str(baseline_model_path),
             device=args.device,
-            dtype=dtype
+            dtype=dtype,
         )
 
-        compression_mode = "recursive KV compression" if compress_kv else "attention masking only"
+        compression_mode = (
+            "recursive KV compression" if compress_kv else "attention masking only"
+        )
         print(f"\nRunning STATIC baseline evaluation ({compression_mode})...")
         aggregate_metrics, per_sample_results = evaluate(
-            test_data, baseline_model, tokenizer, classifier=None,
+            test_data,
+            baseline_model,
+            tokenizer,
+            classifier=None,
             do_baseline=True,
             comp_token_id=comp_token_id,
             newline_token_id_list=newline_token_id_list,
@@ -647,7 +716,7 @@ def main(args):
             compress_kv=compress_kv,
         )
         method_name = "compression_newline"
-    elif args.method == 'compression_classifier':
+    elif args.method == "compression_classifier":
         print(f"\nLoading OURS model with PEFT adapter...")
         model, _ = load_peft_model(
             base_model_id=base_model_id,
@@ -658,15 +727,22 @@ def main(args):
 
         # Load classifier
         print(f"Loading classifier from {args.classifier_path}...")
-        classifier = CompressionClassifier(hidden_size=model.config.hidden_size, dropout=0.1)
+        classifier = CompressionClassifier(
+            hidden_size=model.config.hidden_size, dropout=0.1
+        )
         classifier.load_state_dict(torch.load(args.classifier_path))
         classifier.eval()
         classifier = classifier.to(args.device).to(dtype)
 
-        compression_mode = "recursive KV compression" if compress_kv else "attention masking only"
+        compression_mode = (
+            "recursive KV compression" if compress_kv else "attention masking only"
+        )
         print(f"\nRunning DYNAMIC classifier evaluation ({compression_mode})...")
         aggregate_metrics, per_sample_results = evaluate(
-            test_data, model, tokenizer, classifier=classifier,
+            test_data,
+            model,
+            tokenizer,
+            classifier=classifier,
             do_baseline=False,
             comp_token_id=comp_token_id,
             newline_token_id_list=newline_token_id_list,
@@ -681,8 +757,12 @@ def main(args):
         print(f"\n{title}")
         print("-" * len(title))
         print(f"Accuracy:            {r['accuracy']:.2%}")
-        print(f"Avg COMP tokens:     {r['avg_comp_tokens']:.2f} (±{r['std_comp_tokens']:.2f})")
-        print(f"Avg KV Cache (MB):   {r['avg_kv_cache_mb']:.2f} (±{r['std_kv_cache_mb']:.2f})")
+        print(
+            f"Avg COMP tokens:     {r['avg_comp_tokens']:.2f} (±{r['std_comp_tokens']:.2f})"
+        )
+        print(
+            f"Avg KV Cache (MB):   {r['avg_kv_cache_mb']:.2f} (±{r['std_kv_cache_mb']:.2f})"
+        )
         print(f"Avg Latency (s):     {r['avg_latency']:.3f} (±{r['std_latency']:.3f})")
         print(f"Avg Throughput:      {r['avg_throughput']:.1f} tokens/sec")
         print(f"Avg Tokens Gen:      {r['avg_tokens_generated']:.1f}")
@@ -693,10 +773,12 @@ def main(args):
     print("EVALUATION RESULTS")
     print("=" * 70)
 
-    compression_mode = "recursive KV compression" if compress_kv else "attention masking only"
-    if args.method == 'compression_none':
+    compression_mode = (
+        "recursive KV compression" if compress_kv else "attention masking only"
+    )
+    if args.method == "compression_none":
         title = "No Compression (vanilla LLM, no COMP tokens)"
-    elif args.method == 'compression_newline':
+    elif args.method == "compression_newline":
         title = f"Static Baseline (newline-based) [{compression_mode}]"
     else:
         title = f"Dynamic Classifier (threshold={args.threshold}) [{compression_mode}]"
@@ -705,9 +787,9 @@ def main(args):
 
     # Save comprehensive results
     suffix = "_compressed" if compress_kv else ""
-    if args.method == 'compression_none':
+    if args.method == "compression_none":
         output_fn = "outputs/compression_none_eval_results.json"
-    elif args.method == 'compression_newline':
+    elif args.method == "compression_newline":
         output_fn = f"outputs/compression_newline_eval_results{suffix}.json"
     else:
         output_fn = f"outputs/compression_classifier_eval_results{suffix}.json"
@@ -717,12 +799,22 @@ def main(args):
         # Configuration
         "config": {
             "method": args.method,
-            "threshold": args.threshold if args.method == "compression_classifier" else None,
+            "threshold": args.threshold
+            if args.method == "compression_classifier"
+            else None,
             "compress_kv": compress_kv,
             "max_new_tokens": args.max_new_tokens,
             "test_dataset": args.test_dataset,
-            "model_path": base_model_id if args.method == 'compression_none' else (str(baseline_model_path) if args.method == 'compression_newline' else str(OURS_model_path)),
-            "classifier_path": args.classifier_path if args.method == "compression_classifier" else None,
+            "model_path": base_model_id
+            if args.method == "compression_none"
+            else (
+                str(baseline_model_path)
+                if args.method == "compression_newline"
+                else str(OURS_model_path)
+            ),
+            "classifier_path": args.classifier_path
+            if args.method == "compression_classifier"
+            else None,
         },
         # Aggregate metrics
         "aggregate_metrics": aggregate_metrics,
@@ -736,31 +828,64 @@ def main(args):
     print(f"  - Config and aggregate metrics")
     print(f"  - {len(per_sample_results)} per-sample results with full metadata")
 
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--test_dataset', type=str, required=False, default='data/gsm8k-test-200.json',
-                        help='Path to test JSON file')
-    parser.add_argument('--classifier_path', type=str, default='outputs/classifier/compression_classifier.pt',
-                        help='Path to classifier checkpoint')
-    parser.add_argument('--baseline_model', type=str,
-                        default='outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur',
-                        help='Path to model (local) or HF model ID')
-    parser.add_argument('--OURS_model', type=str, default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur',
-                        help='Path to model (local) or HF model ID')
-    parser.add_argument('--threshold', type=float, default=0.5, help='Classifier threshold for COMP insertion')
-    parser.add_argument('--max_new_tokens', type=int, default=256, help='Max tokens to generate')
-    parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--method', type=str, required=True,
-                        choices=['compression_none', 'compression_newline', 'compression_classifier'],
-                        help='Compression method: '
-                             'compression_none = vanilla LLM (no COMP tokens), '
-                             'compression_newline = insert COMP after newlines, '
-                             'compression_classifier = learned COMP placement')
-    parser.add_argument('--no_compress_kv', action='store_true', default=False,
-                        help='Disable KV extraction, use attention masking only (no real memory savings). '
-                             'By default, KV extraction is enabled.')
+    parser.add_argument(
+        "--test_dataset",
+        type=str,
+        required=False,
+        default="data/gsm8k-test-200.json",
+        help="Path to test JSON file",
+    )
+    parser.add_argument(
+        "--classifier_path",
+        type=str,
+        default="outputs/classifier/compression_classifier.pt",
+        help="Path to classifier checkpoint",
+    )
+    parser.add_argument(
+        "--baseline_model",
+        type=str,
+        default="outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur",
+        help="Path to model (local) or HF model ID",
+    )
+    parser.add_argument(
+        "--OURS_model",
+        type=str,
+        default="outputs/OURS_llama-3.1-8b-instruct-online-concat_recur",
+        help="Path to model (local) or HF model ID",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Classifier threshold for COMP insertion",
+    )
+    parser.add_argument(
+        "--max_new_tokens", type=int, default=256, help="Max tokens to generate"
+    )
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument(
+        "--method",
+        type=str,
+        required=True,
+        choices=["compression_none", "compression_newline", "compression_classifier"],
+        help="Compression method: "
+        "compression_none = vanilla LLM (no COMP tokens), "
+        "compression_newline = insert COMP after newlines, "
+        "compression_classifier = learned COMP placement",
+    )
+    parser.add_argument(
+        "--no_compress_kv",
+        action="store_true",
+        default=False,
+        help="Disable KV extraction, use attention masking only (no real memory savings). "
+        "By default, KV extraction is enabled.",
+    )
 
     main(parser.parse_args())
     # compare_models("outputs/baseline_eval_results.json", "outputs/dynamic_eval_results.json")
+
