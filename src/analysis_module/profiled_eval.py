@@ -42,10 +42,14 @@ from analysis_module.eval_compression import (
     extract_comp_results,
 )
 
+# import wanbd logging for eval
+from src.common_utils import init_wandb_eval, log_profiled_eval_results
+
 
 @dataclass
 class ProfiledMetrics:
     """Detailed metrics for a single sample with profiling data."""
+
     sample_id: int
     method: str
     # Core metrics
@@ -69,6 +73,7 @@ class ProfiledMetrics:
 @dataclass
 class AggregatedResults:
     """Aggregated results across all samples for a method."""
+
     method: str
     num_samples: int
     # Accuracy
@@ -93,7 +98,9 @@ class AggregatedResults:
     classifier_memory_mb: float = 0.0
 
 
-def generate_no_compression(model, tokenizer, input_ids, max_new_tokens=256, device='cuda'):
+def generate_no_compression(
+    model, tokenizer, input_ids, max_new_tokens=256, device="cuda"
+):
     """
     Generate without any COMP token insertion (vanilla LLM baseline).
 
@@ -145,15 +152,25 @@ def generate_no_compression(model, tokenizer, input_ids, max_new_tokens=256, dev
 
 
 def generate_with_classifier_profiled(
-    model, tokenizer, input_ids, classifier, comp_token_id,
-    threshold=0.85, max_new_tokens=256, device='cuda', compress_kv=True
+    model,
+    tokenizer,
+    input_ids,
+    classifier,
+    comp_token_id,
+    threshold=0.85,
+    max_new_tokens=256,
+    device="cuda",
+    compress_kv=True,
 ):
     """
     Generate with classifier-based COMP insertion + detailed timing breakdown.
 
     Returns dict with generation results and classifier profiling data.
     """
-    from analysis_module.eval_compression import _extract_sink_and_comp, extract_comp_results
+    from analysis_module.eval_compression import (
+        _extract_sink_and_comp,
+        extract_comp_results,
+    )
 
     generated_ids = input_ids.clone().to(device)
     past_key_values = None
@@ -210,7 +227,7 @@ def generate_with_classifier_profiled(
         t_cls_end = time.perf_counter()
 
         classifier_calls += 1
-        classifier_time_total += (t_cls_end - t_cls_start)
+        classifier_time_total += t_cls_end - t_cls_start
 
         should_insert_comp = comp_prob >= threshold
 
@@ -262,14 +279,14 @@ def generate_with_classifier_profiled(
         kv_size = 0
 
     return {
-        'generated_ids': generated_ids,
-        'comp_count': comp_count,
-        'kv_size_bytes': kv_size,
-        'total_latency': total_latency,
-        'classifier_calls': classifier_calls,
-        'classifier_time_total': classifier_time_total,
-        'model_forward_time': model_forward_time,
-        'comp_forward_time': comp_forward_time,
+        "generated_ids": generated_ids,
+        "comp_count": comp_count,
+        "kv_size_bytes": kv_size,
+        "total_latency": total_latency,
+        "classifier_calls": classifier_calls,
+        "classifier_time_total": classifier_time_total,
+        "model_forward_time": model_forward_time,
+        "comp_forward_time": comp_forward_time,
     }
 
 
@@ -312,14 +329,17 @@ class ProfiledEvaluator:
             self.baseline_adapter_path,
             trust_remote_code=True,
             local_files_only=True,
-            fix_mistral_regex=True
+            fix_mistral_regex=True,
         )
         self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.comp_token_id, self.newline_token_ids = get_comp_and_newline_tokens(self.tokenizer)
+        self.comp_token_id, self.newline_token_ids = get_comp_and_newline_tokens(
+            self.tokenizer
+        )
 
     def load_vanilla_model(self):
         """Load vanilla Llama model (no CCM fine-tuning)."""
         from transformers import AutoModelForCausalLM
+
         print(f"\nLoading {self.base_model_id} (no CCM fine-tuning)...")
         self.vanilla_model = AutoModelForCausalLM.from_pretrained(
             self.base_model_id,
@@ -342,7 +362,7 @@ class ProfiledEvaluator:
             base_model_id=self.base_model_id,
             adapter_path=self.baseline_adapter_path,
             device=self.device,
-            dtype=self.dtype
+            dtype=self.dtype,
         )
 
     def unload_baseline_model(self):
@@ -360,7 +380,7 @@ class ProfiledEvaluator:
             base_model_id=self.base_model_id,
             adapter_path=self.dynamic_adapter_path,
             device=self.device,
-            dtype=self.dtype
+            dtype=self.dtype,
         )
 
         # Load classifier with memory measurement
@@ -369,8 +389,7 @@ class ProfiledEvaluator:
         mem_before = torch.cuda.memory_allocated()
 
         self.classifier = CompressionClassifier(
-            hidden_size=self.dynamic_model.config.hidden_size,
-            dropout=0.1
+            hidden_size=self.dynamic_model.config.hidden_size, dropout=0.1
         )
         self.classifier.load_state_dict(torch.load(self.classifier_path))
         self.classifier.eval()
@@ -394,15 +413,19 @@ class ProfiledEvaluator:
         torch.cuda.empty_cache()
         print("Dynamic model and classifier unloaded.")
 
-    def profile_classifier_standalone(self, num_iterations: int = 100) -> Dict[str, float]:
+    def profile_classifier_standalone(
+        self, num_iterations: int = 100
+    ) -> Dict[str, float]:
         """Profile the classifier in isolation using PyTorch profiler."""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("CLASSIFIER STANDALONE PROFILING")
-        print("="*60)
+        print("=" * 60)
 
         # Create dummy input matching real usage
         hidden_size = self.dynamic_model.config.hidden_size
-        dummy_hidden = torch.randn(1, 1, hidden_size, device=self.device, dtype=self.dtype)
+        dummy_hidden = torch.randn(
+            1, 1, hidden_size, device=self.device, dtype=self.dtype
+        )
 
         # Warmup
         for _ in range(10):
@@ -430,8 +453,12 @@ class ProfiledEvaluator:
 
         # Get total device (CUDA) and CPU time
         # Note: PyTorch renamed cuda_time -> device_time for attribute access
-        total_device_time = sum(item.self_device_time_total for item in key_averages) / 1000  # ms
-        total_cpu_time = sum(item.self_cpu_time_total for item in key_averages) / 1000  # ms
+        total_device_time = (
+            sum(item.self_device_time_total for item in key_averages) / 1000
+        )  # ms
+        total_cpu_time = (
+            sum(item.self_cpu_time_total for item in key_averages) / 1000
+        )  # ms
 
         # Manual timing for comparison
         times = []
@@ -447,14 +474,14 @@ class ProfiledEvaluator:
         std_time_ms = np.std(times)
 
         results = {
-            'avg_latency_ms': avg_time_ms,
-            'std_latency_ms': std_time_ms,
-            'min_latency_ms': np.min(times),
-            'max_latency_ms': np.max(times),
-            'profiler_cuda_time_ms': total_device_time / num_iterations,
-            'profiler_cpu_time_ms': total_cpu_time / num_iterations,
-            'memory_mb': self.classifier_memory_mb,
-            'num_parameters': self.classifier_params,
+            "avg_latency_ms": avg_time_ms,
+            "std_latency_ms": std_time_ms,
+            "min_latency_ms": np.min(times),
+            "max_latency_ms": np.max(times),
+            "profiler_cuda_time_ms": total_device_time / num_iterations,
+            "profiler_cpu_time_ms": total_cpu_time / num_iterations,
+            "memory_mb": self.classifier_memory_mb,
+            "num_parameters": self.classifier_params,
         }
 
         print(f"\nClassifier Latency (over {num_iterations} iterations):")
@@ -463,8 +490,8 @@ class ProfiledEvaluator:
         print(f"  Min:     {np.min(times):.4f} ms")
         print(f"  Max:     {np.max(times):.4f} ms")
         print(f"\nPyTorch Profiler Stats (per call):")
-        print(f"  CUDA time: {total_device_time/num_iterations:.4f} ms")
-        print(f"  CPU time:  {total_cpu_time/num_iterations:.4f} ms")
+        print(f"  CUDA time: {total_device_time / num_iterations:.4f} ms")
+        print(f"  CPU time:  {total_cpu_time / num_iterations:.4f} ms")
         print(f"\nMemory:")
         print(f"  Classifier size: {self.classifier_memory_mb:.2f} MB")
         print(f"  Parameters: {self.classifier_params:,}")
@@ -490,21 +517,28 @@ class ProfiledEvaluator:
         results = list(existing_results)  # Start with existing results
         start_idx = len(results)
 
-        for i, sample in tqdm(enumerate(test_data), total=len(test_data), desc=f"Eval {method}"):
+        for i, sample in tqdm(
+            enumerate(test_data), total=len(test_data), desc=f"Eval {method}"
+        ):
             # Skip already completed samples
             if i < start_idx:
                 continue
 
             gt_answer = extract_gsm8k_answer(sample)
-            question = sample.get('question', '')
-            input_ids = self.tokenizer.encode(question, return_tensors='pt').to(self.device)
+            question = sample.get("question", "")
+            input_ids = self.tokenizer.encode(question, return_tensors="pt").to(
+                self.device
+            )
 
             torch.cuda.reset_peak_memory_stats()
 
             if method == "compression_none":
                 gen_ids, comp_count, kv_bytes, latency = generate_no_compression(
-                    self.vanilla_model, self.tokenizer, input_ids,
-                    max_new_tokens=max_new_tokens, device=self.device
+                    self.vanilla_model,
+                    self.tokenizer,
+                    input_ids,
+                    max_new_tokens=max_new_tokens,
+                    device=self.device,
                 )
                 classifier_calls = 0
                 classifier_time = 0.0
@@ -512,11 +546,16 @@ class ProfiledEvaluator:
             elif method == "compression_newline":
                 t0 = time.perf_counter()
                 gen_ids, comp_count, kv_bytes = generate_with_compression(
-                    self.baseline_model, self.tokenizer, input_ids,
-                    classifier=None, comp_token_id=self.comp_token_id,
+                    self.baseline_model,
+                    self.tokenizer,
+                    input_ids,
+                    classifier=None,
+                    comp_token_id=self.comp_token_id,
                     newline_token_id_list=self.newline_token_ids,
-                    use_classifier=False, max_new_tokens=max_new_tokens,
-                    device=self.device, compress_kv=True
+                    use_classifier=False,
+                    max_new_tokens=max_new_tokens,
+                    device=self.device,
+                    compress_kv=True,
                 )
                 latency = time.perf_counter() - t0
                 classifier_calls = 0
@@ -525,17 +564,22 @@ class ProfiledEvaluator:
             elif method.startswith("compression_classifier"):
                 # Handle compression_classifier_{threshold} methods
                 result = generate_with_classifier_profiled(
-                    self.dynamic_model, self.tokenizer, input_ids,
-                    self.classifier, self.comp_token_id,
-                    threshold=threshold, max_new_tokens=max_new_tokens,
-                    device=self.device, compress_kv=True
+                    self.dynamic_model,
+                    self.tokenizer,
+                    input_ids,
+                    self.classifier,
+                    self.comp_token_id,
+                    threshold=threshold,
+                    max_new_tokens=max_new_tokens,
+                    device=self.device,
+                    compress_kv=True,
                 )
-                gen_ids = result['generated_ids']
-                comp_count = result['comp_count']
-                kv_bytes = result['kv_size_bytes']
-                latency = result['total_latency']
-                classifier_calls = result['classifier_calls']
-                classifier_time = result['classifier_time_total']
+                gen_ids = result["generated_ids"]
+                comp_count = result["comp_count"]
+                kv_bytes = result["kv_size_bytes"]
+                latency = result["total_latency"]
+                classifier_calls = result["classifier_calls"]
+                classifier_time = result["classifier_time_total"]
             else:
                 raise ValueError(f"Unknown method: {method}")
 
@@ -547,7 +591,11 @@ class ProfiledEvaluator:
             tokens_generated = gen_ids.shape[1] - input_ids.shape[1]
             kv_cache_mb = kv_bytes / (1024 * 1024)
             throughput = tokens_generated / latency if latency > 0 else 0
-            classifier_overhead = (classifier_time / latency * 100) if latency > 0 and classifier_time > 0 else 0
+            classifier_overhead = (
+                (classifier_time / latency * 100)
+                if latency > 0 and classifier_time > 0
+                else 0
+            )
             peak_memory = torch.cuda.max_memory_allocated() / (1024 * 1024)
 
             metrics = ProfiledMetrics(
@@ -568,10 +616,19 @@ class ProfiledEvaluator:
 
             # Save checkpoint after each sample
             all_results[method] = results
-            self._save_checkpoint(output_path, all_results, classifier_profile, threshold, max_new_tokens, len(test_data))
+            self._save_checkpoint(
+                output_path,
+                all_results,
+                classifier_profile,
+                threshold,
+                max_new_tokens,
+                len(test_data),
+            )
 
             if (i + 1) % 10 == 0:
-                print(f"Checkpoint saved: {i+1}/{len(test_data)} samples for {method}")
+                print(
+                    f"Checkpoint saved: {i + 1}/{len(test_data)} samples for {method}"
+                )
 
         return results
 
@@ -586,19 +643,24 @@ class ProfiledEvaluator:
     ):
         """Save current progress to JSON file."""
         checkpoint = {
-            'config': {
-                'threshold': threshold,
-                'max_new_tokens': max_new_tokens,
-                'num_samples': num_samples,
+            "config": {
+                "threshold": threshold,
+                "max_new_tokens": max_new_tokens,
+                "num_samples": num_samples,
             },
-            'classifier_profile': classifier_profile,
-            'per_sample': {k: [asdict(s) for s in v] for k, v in all_results.items()},
+            "classifier_profile": classifier_profile,
+            "per_sample": {k: [asdict(s) for s in v] for k, v in all_results.items()},
             # Don't include aggregated - will be computed at the end
         }
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(checkpoint, f, indent=2)
 
-    def _print_method_stats(self, method: str, results: List[ProfiledMetrics], baseline_kv_mb: Optional[float] = None):
+    def _print_method_stats(
+        self,
+        method: str,
+        results: List[ProfiledMetrics],
+        baseline_kv_mb: Optional[float] = None,
+    ):
         """Print statistics for a completed method (consistent with eval_compression.py style)."""
         n = len(results)
         if n == 0:
@@ -622,9 +684,9 @@ class ProfiledEvaluator:
         else:
             compression_ratio = 1.0
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Results: {method}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"Accuracy:            {accuracy:.1f}%")
         print(f"Avg COMP tokens:     {avg_comp_tokens:.2f} ± {std_comp_tokens:.2f}")
         print(f"Avg KV Cache (MB):   {avg_kv_cache_mb:.2f} ± {std_kv_cache_mb:.2f}")
@@ -639,11 +701,13 @@ class ProfiledEvaluator:
         # Additional classifier stats for classifier methods
         if method.startswith("compression_classifier"):
             avg_classifier_time = np.mean([r.classifier_time_ms for r in results])
-            avg_classifier_overhead = np.mean([r.classifier_overhead_pct for r in results])
+            avg_classifier_overhead = np.mean(
+                [r.classifier_overhead_pct for r in results]
+            )
             print(f"Avg Classifier Time: {avg_classifier_time:.3f} ms")
             print(f"Classifier Overhead: {avg_classifier_overhead:.2f}%")
 
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
     def _build_final_results(
         self,
@@ -676,23 +740,29 @@ class ProfiledEvaluator:
                 compression_ratio=no_comp_kv / avg_kv if avg_kv > 0 else 1.0,
                 avg_latency_sec=np.mean([r.latency_seconds for r in samples]),
                 std_latency_sec=np.std([r.latency_seconds for r in samples]),
-                avg_throughput_tps=np.mean([r.throughput_tokens_per_sec for r in samples]),
+                avg_throughput_tps=np.mean(
+                    [r.throughput_tokens_per_sec for r in samples]
+                ),
                 total_time_sec=total_time,
                 avg_classifier_time_ms=np.mean([r.classifier_time_ms for r in samples]),
-                classifier_overhead_pct=np.mean([r.classifier_overhead_pct for r in samples]),
+                classifier_overhead_pct=np.mean(
+                    [r.classifier_overhead_pct for r in samples]
+                ),
                 avg_peak_memory_mb=np.mean([r.peak_memory_mb for r in samples]),
-                classifier_memory_mb=self.classifier_memory_mb if method.startswith("compression_classifier") else 0,
+                classifier_memory_mb=self.classifier_memory_mb
+                if method.startswith("compression_classifier")
+                else 0,
             )
 
         return {
-            'config': {
-                'thresholds': thresholds,
-                'max_new_tokens': max_new_tokens,
-                'num_samples': len(test_data),
+            "config": {
+                "thresholds": thresholds,
+                "max_new_tokens": max_new_tokens,
+                "num_samples": len(test_data),
             },
-            'classifier_profile': classifier_profile,
-            'aggregated': {k: asdict(v) for k, v in aggregated.items()},
-            'per_sample': {k: [asdict(s) for s in v] for k, v in all_results.items()},
+            "classifier_profile": classifier_profile,
+            "aggregated": {k: asdict(v) for k, v in aggregated.items()},
+            "per_sample": {k: [asdict(s) for s in v] for k, v in all_results.items()},
         }
 
     def run_full_evaluation(
@@ -720,20 +790,20 @@ class ProfiledEvaluator:
 
         if os.path.exists(output_path):
             print(f"\nFound existing results at {output_path}, loading for resume...")
-            with open(output_path, 'r') as f:
+            with open(output_path, "r") as f:
                 existing = json.load(f)
 
             # Restore previous results
-            if 'per_sample' in existing:
-                for method, samples in existing['per_sample'].items():
+            if "per_sample" in existing:
+                for method, samples in existing["per_sample"].items():
                     all_results[method] = [ProfiledMetrics(**s) for s in samples]
                     print(f"  Loaded {len(samples)} samples for {method}")
 
-            if 'classifier_profile' in existing and existing['classifier_profile']:
-                classifier_profile = existing['classifier_profile']
+            if "classifier_profile" in existing and existing["classifier_profile"]:
+                classifier_profile = existing["classifier_profile"]
                 # Restore classifier memory info for final results
-                self.classifier_memory_mb = classifier_profile.get('memory_mb', 0.0)
-                self.classifier_params = classifier_profile.get('num_parameters', 0)
+                self.classifier_memory_mb = classifier_profile.get("memory_mb", 0.0)
+                self.classifier_params = classifier_profile.get("num_parameters", 0)
                 print(f"  Loaded classifier profile")
 
         # Check if all methods are complete
@@ -744,16 +814,20 @@ class ProfiledEvaluator:
 
         if all_complete and classifier_profile is not None:
             print("\nAll evaluations already complete! Nothing to do.")
-            return self._build_final_results(all_results, classifier_profile, thresholds, max_new_tokens, test_data)
+            return self._build_final_results(
+                all_results, classifier_profile, thresholds, max_new_tokens, test_data
+            )
 
         # Load tokenizer first (shared across all methods)
         self.load_tokenizer()
 
         # === 1. No Compression (vanilla Llama) ===
-        if "compression_none" not in all_results or len(all_results["compression_none"]) < len(test_data):
-            print(f"\n{'='*60}")
+        if "compression_none" not in all_results or len(
+            all_results["compression_none"]
+        ) < len(test_data):
+            print(f"\n{'=' * 60}")
             print(f"Evaluating: compression_none")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             self.load_vanilla_model()
 
             # Get starting index for resume
@@ -772,19 +846,31 @@ class ProfiledEvaluator:
                 existing_results=all_results.get("compression_none", []),
             )
             self.unload_vanilla_model()
-            self._print_method_stats("compression_none", all_results["compression_none"])
+            self._print_method_stats(
+                "compression_none", all_results["compression_none"]
+            )
         else:
-            print(f"\ncompression_none already complete ({len(all_results['compression_none'])} samples), skipping.")
-            self._print_method_stats("compression_none", all_results["compression_none"])
+            print(
+                f"\ncompression_none already complete ({len(all_results['compression_none'])} samples), skipping."
+            )
+            self._print_method_stats(
+                "compression_none", all_results["compression_none"]
+            )
 
         # Get baseline KV for compression ratio calculation
-        baseline_kv_mb = np.mean([r.kv_cache_mb for r in all_results["compression_none"]]) if all_results.get("compression_none") else None
+        baseline_kv_mb = (
+            np.mean([r.kv_cache_mb for r in all_results["compression_none"]])
+            if all_results.get("compression_none")
+            else None
+        )
 
         # === 2. Newline-based Compression ===
-        if "compression_newline" not in all_results or len(all_results["compression_newline"]) < len(test_data):
-            print(f"\n{'='*60}")
+        if "compression_newline" not in all_results or len(
+            all_results["compression_newline"]
+        ) < len(test_data):
+            print(f"\n{'=' * 60}")
             print(f"Evaluating: compression_newline")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             self.load_baseline_model()
 
             start_idx = len(all_results.get("compression_newline", []))
@@ -802,15 +888,26 @@ class ProfiledEvaluator:
                 existing_results=all_results.get("compression_newline", []),
             )
             self.unload_baseline_model()
-            self._print_method_stats("compression_newline", all_results["compression_newline"], baseline_kv_mb)
+            self._print_method_stats(
+                "compression_newline",
+                all_results["compression_newline"],
+                baseline_kv_mb,
+            )
         else:
-            print(f"\ncompression_newline already complete ({len(all_results['compression_newline'])} samples), skipping.")
-            self._print_method_stats("compression_newline", all_results["compression_newline"], baseline_kv_mb)
+            print(
+                f"\ncompression_newline already complete ({len(all_results['compression_newline'])} samples), skipping."
+            )
+            self._print_method_stats(
+                "compression_newline",
+                all_results["compression_newline"],
+                baseline_kv_mb,
+            )
 
         # === 3. Classifier-based Compression (multiple thresholds) ===
         # Check if any classifier method needs to be run
         classifier_methods_needed = [
-            m for m in classifier_methods
+            m
+            for m in classifier_methods
             if m not in all_results or len(all_results[m]) < len(test_data)
         ]
 
@@ -828,10 +925,12 @@ class ProfiledEvaluator:
             for threshold in thresholds:
                 method_name = f"compression_classifier_{threshold}"
 
-                if method_name not in all_results or len(all_results[method_name]) < len(test_data):
-                    print(f"\n{'='*60}")
+                if method_name not in all_results or len(
+                    all_results[method_name]
+                ) < len(test_data):
+                    print(f"\n{'=' * 60}")
                     print(f"Evaluating: {method_name}")
-                    print(f"{'='*60}")
+                    print(f"{'=' * 60}")
 
                     start_idx = len(all_results.get(method_name, []))
                     if start_idx > 0:
@@ -847,38 +946,56 @@ class ProfiledEvaluator:
                         classifier_profile=classifier_profile,
                         existing_results=all_results.get(method_name, []),
                     )
-                    self._print_method_stats(method_name, all_results[method_name], baseline_kv_mb)
+                    self._print_method_stats(
+                        method_name, all_results[method_name], baseline_kv_mb
+                    )
                 else:
-                    print(f"\n{method_name} already complete ({len(all_results[method_name])} samples), skipping.")
-                    self._print_method_stats(method_name, all_results[method_name], baseline_kv_mb)
+                    print(
+                        f"\n{method_name} already complete ({len(all_results[method_name])} samples), skipping."
+                    )
+                    self._print_method_stats(
+                        method_name, all_results[method_name], baseline_kv_mb
+                    )
 
             self.unload_dynamic_model()
         else:
             # All classifier methods complete, just print stats
             for threshold in thresholds:
                 method_name = f"compression_classifier_{threshold}"
-                print(f"\n{method_name} already complete ({len(all_results[method_name])} samples), skipping.")
-                self._print_method_stats(method_name, all_results[method_name], baseline_kv_mb)
+                print(
+                    f"\n{method_name} already complete ({len(all_results[method_name])} samples), skipping."
+                )
+                self._print_method_stats(
+                    method_name, all_results[method_name], baseline_kv_mb
+                )
 
         # Build and return final results
-        return self._build_final_results(all_results, classifier_profile, thresholds, max_new_tokens, test_data)
+        return self._build_final_results(
+            all_results, classifier_profile, thresholds, max_new_tokens, test_data
+        )
 
 
 def print_results_table(results: Dict[str, Any]):
     """Print formatted results table (consistent with eval_compression.py style)."""
-    agg = results['aggregated']
-    cls_prof = results['classifier_profile']
-    thresholds = results['config'].get('thresholds', [])
+    agg = results["aggregated"]
+    cls_prof = results["classifier_profile"]
+    thresholds = results["config"].get("thresholds", [])
 
     def print_method_results(title, r, show_classifier_stats=False):
         """Print results for a single method."""
         print(f"\n{title}")
         print("-" * len(title))
         print(f"Accuracy:            {r['accuracy_pct']:.1f}%")
-        print(f"Avg COMP tokens:     {r['avg_comp_tokens']:.2f} ± {r['std_comp_tokens']:.2f}")
-        print(f"Avg KV Cache (MB):   {r['avg_kv_cache_mb']:.2f} ± {r['std_kv_cache_mb']:.2f}")
+        print(
+            f"Avg COMP tokens:     {r['avg_comp_tokens']:.2f} ± {r['std_comp_tokens']:.2f}"
+        )
+        print(
+            f"Avg KV Cache (MB):   {r['avg_kv_cache_mb']:.2f} ± {r['std_kv_cache_mb']:.2f}"
+        )
         print(f"Compression Ratio:   {r['compression_ratio']:.2f}x")
-        print(f"Avg Latency (s):     {r['avg_latency_sec']:.3f} ± {r['std_latency_sec']:.3f}")
+        print(
+            f"Avg Latency (s):     {r['avg_latency_sec']:.3f} ± {r['std_latency_sec']:.3f}"
+        )
         print(f"Avg Throughput:      {r['avg_throughput_tps']:.1f} tokens/sec")
         print(f"Avg Tokens Gen:      {r['avg_tokens_generated']:.1f}")
         print(f"Total Time:          {r['total_time_sec']:.1f}s")
@@ -892,14 +1009,23 @@ def print_results_table(results: Dict[str, Any]):
     print("=" * 70)
 
     # Print individual method results
-    print_method_results("compression_none (vanilla LLM, no COMP tokens)", agg['compression_none'])
-    print_method_results("compression_newline (insert COMP after newlines) [recursive KV compression]", agg['compression_newline'])
+    print_method_results(
+        "compression_none (vanilla LLM, no COMP tokens)", agg["compression_none"]
+    )
+    print_method_results(
+        "compression_newline (insert COMP after newlines) [recursive KV compression]",
+        agg["compression_newline"],
+    )
 
     # Print results for each threshold
     for t in thresholds:
         method_name = f"compression_classifier_{t}"
         if method_name in agg:
-            print_method_results(f"{method_name} [recursive KV compression]", agg[method_name], show_classifier_stats=True)
+            print_method_results(
+                f"{method_name} [recursive KV compression]",
+                agg[method_name],
+                show_classifier_stats=True,
+            )
 
     # Comparison table
     print("\n" + "=" * 70)
@@ -908,7 +1034,9 @@ def print_results_table(results: Dict[str, Any]):
 
     # Build dynamic header based on thresholds
     classifier_headers = [f"Cls_{t}" for t in thresholds]
-    header_parts = ["Metric".ljust(22), "None".rjust(10), "Newline".rjust(10)] + [h.rjust(10) for h in classifier_headers]
+    header_parts = ["Metric".ljust(22), "None".rjust(10), "Newline".rjust(10)] + [
+        h.rjust(10) for h in classifier_headers
+    ]
     header = " ".join(header_parts)
     print(f"\n{header}")
     print("-" * len(header))
@@ -916,8 +1044,8 @@ def print_results_table(results: Dict[str, Any]):
     # Helper to build row
     def print_row(metric_name, key, format_str="{:>10.2f}", suffix=""):
         parts = [metric_name.ljust(22)]
-        parts.append(format_str.format(agg['compression_none'][key]) + suffix)
-        parts.append(format_str.format(agg['compression_newline'][key]) + suffix)
+        parts.append(format_str.format(agg["compression_none"][key]) + suffix)
+        parts.append(format_str.format(agg["compression_newline"][key]) + suffix)
         for t in thresholds:
             method = f"compression_classifier_{t}"
             if method in agg:
@@ -940,18 +1068,27 @@ def print_results_table(results: Dict[str, Any]):
 
     print(f"Classifier Memory:           {cls_prof['memory_mb']:.2f} MB")
     print(f"Classifier Parameters:       {cls_prof['num_parameters']:,}")
-    print(f"Avg Classifier Latency:      {cls_prof['avg_latency_ms']:.4f} ms (standalone)")
+    print(
+        f"Avg Classifier Latency:      {cls_prof['avg_latency_ms']:.4f} ms (standalone)"
+    )
 
     # Show overhead for each threshold
     for t in thresholds:
         method = f"compression_classifier_{t}"
         if method in agg:
             dyn = agg[method]
-            latency_overhead = ((dyn['avg_latency_sec'] - agg['compression_none']['avg_latency_sec'])
-                                / agg['compression_none']['avg_latency_sec'] * 100)
+            latency_overhead = (
+                (dyn["avg_latency_sec"] - agg["compression_none"]["avg_latency_sec"])
+                / agg["compression_none"]["avg_latency_sec"]
+                * 100
+            )
             print(f"\n  Threshold {t}:")
-            print(f"    Avg Classifier Time/Sample:  {dyn['avg_classifier_time_ms']:.3f} ms")
-            print(f"    Classifier Overhead:         {dyn['classifier_overhead_pct']:.2f}% of total latency")
+            print(
+                f"    Avg Classifier Time/Sample:  {dyn['avg_classifier_time_ms']:.3f} ms"
+            )
+            print(
+                f"    Classifier Overhead:         {dyn['classifier_overhead_pct']:.2f}% of total latency"
+            )
             print(f"    Latency vs compression_none: {latency_overhead:+.1f}%")
 
     print("\n" + "=" * 70)
@@ -961,18 +1098,43 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Profiled CCM compression evaluation")
-    parser.add_argument('--test_dataset', type=str, default='data/gsm8k-test-20.json')
-    parser.add_argument('--baseline_model', type=str,
-                        default='outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur')
-    parser.add_argument('--dynamic_model', type=str,
-                        default='outputs/OURS_llama-3.1-8b-instruct-online-concat_recur')
-    parser.add_argument('--classifier_path', type=str,
-                        default='outputs/classifier/compression_classifier.pt')
-    parser.add_argument('--thresholds', type=float, nargs='+', default=[0.5, 0.7, 0.9],
-                        help='List of classifier thresholds to evaluate (default: 0.5 0.7 0.9)')
-    parser.add_argument('--max_new_tokens', type=int, default=256)
-    parser.add_argument('--output', type=str, default='outputs/profiled_eval_results.json')
-    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument("--test_dataset", type=str, default="data/gsm8k-test-20.json")
+    parser.add_argument(
+        "--baseline_model",
+        type=str,
+        default="outputs/baseline_insert_COMP_after_newline-llama-3.1-8b-instruct-online-concat_recur",
+    )
+    parser.add_argument(
+        "--dynamic_model",
+        type=str,
+        default="outputs/OURS_llama-3.1-8b-instruct-online-concat_recur",
+    )
+    parser.add_argument(
+        "--classifier_path",
+        type=str,
+        default="outputs/classifier/compression_classifier.pt",
+    )
+    parser.add_argument(
+        "--thresholds",
+        type=float,
+        nargs="+",
+        default=[0.5, 0.7, 0.9],
+        help="List of classifier thresholds to evaluate (default: 0.5 0.7 0.9)",
+    )
+    parser.add_argument("--max_new_tokens", type=int, default=256)
+    parser.add_argument(
+        "--output", type=str, default="outputs/profiled_eval_results.json"
+    )
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb_entity", type=str, default=None)
+    parser.add_argument("--wandb_project", type=str, default="hpml-dynamic-compression")
+    parser.add_argument("--wandb_group", type=str, default=None)
+    parser.add_argument("--wandb_name", type=str, default=None)
+    parser.add_argument("--wandb_tags", type=str, nargs="*", default=[])
+    parser.add_argument(
+        "--wandb_no_table", action="store_true", help="Disable per-sample table logging"
+    )
 
     args = parser.parse_args()
 
@@ -982,6 +1144,27 @@ def main():
         test_data = json.load(f)
     print(f"  Loaded {len(test_data)} samples")
     print(f"  Thresholds: {args.thresholds}")
+
+    # initialize WandB
+    run = init_wandb_eval(
+        enabled=args.wandb,
+        entity=args.wandb_entity,
+        project=args.wandb_project,
+        group=args.wandb_group,
+        name=args.wandb_name,
+        tags=args.wandb_tags,
+        config={
+            "test_dataset": args.test_dataset,
+            "num_samples": len(test_data),
+            "thresholds": args.thresholds,
+            "max_new_tokens": args.max_new_tokens,
+            "baseline_model": args.baseline_model,
+            "dynamic_model": args.dynamic_model,
+            "classifier_path": args.classifier_path,
+            "device": args.device,
+            "script": "profiled_eval.py",
+        },
+    )
 
     # Initialize evaluator
     evaluator = ProfiledEvaluator(
@@ -1004,10 +1187,24 @@ def main():
     print_results_table(results)
 
     # Save final results (with aggregated metrics)
-    with open(args.output, 'w') as f:
+    with open(args.output, "w") as f:
         json.dump(results, f, indent=2)
 
-    num_methods = 2 + len(args.thresholds)  # compression_none, compression_newline, + classifiers
+    # log the eval results to json
+    log_profiled_eval_results(
+        run,
+        results=results,
+        output_json_path=args.output,
+        log_per_sample_table=(not args.wandb_no_table),
+        artifact_name=f"profiled_eval_{Path(args.test_dataset).stem}",
+    )
+
+    if run is not None:
+        run.finish()
+
+    num_methods = 2 + len(
+        args.thresholds
+    )  # compression_none, compression_newline, + classifiers
     print(f"\nFinal results saved to: {args.output}")
     print(f"  - Config and classifier profile")
     print(f"  - Aggregated metrics for {num_methods} methods")
