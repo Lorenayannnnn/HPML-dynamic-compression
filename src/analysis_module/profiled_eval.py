@@ -43,7 +43,7 @@ from analysis_module.eval_compression import (
 )
 
 # import wanbd logging for eval
-from src.common_utils import init_wandb_eval, log_profiled_eval_results
+from common_utils import init_wandb_eval, log_profiled_eval_results
 
 
 @dataclass
