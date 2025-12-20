@@ -1,5 +1,10 @@
 # HPML Course Project: Dynamic KV Cache Compression for Reasoning
 
+> **Course**: COMS 6998 - High Performance Machine Learning
+> **Institution**: Columbia University
+> **Semester**: Fall 2025
+> **Instructor**: Prof. Kaoutar El Maghraoui
+
 ## Team Information
 - **Team Name**: Dynamic Compression
 - **Members**:
@@ -7,6 +12,15 @@
   - Shayan Chowdhury (sc4040)
   - Chaitya Shah (cs4621)
   - Can Kerem Akbulut (cka2115)
+
+
+## Project Resources
+
+| Resource | Description | Link |
+|----------|-------------|------|
+| **WandB CCM LoRA Compression Training Dashboard** | CCM LoRA training metrics and loss curves | [View Dashboard](https://wandb.ai/lorena-yantianyi1020/hpml-dynamic-compression?nw=nwuserlorenayantianyi1020) |
+| **WandB Custom GSM8K Evaluation Dashboard** | Evaluation metrics, accuracy, and compression results | [View Dashboard](https://wandb.ai/cankeremakbulut-personal/hpml-dynamic-compression/workspace?nw=nwusercankeremakbulut) |
+| **Medium Article (for bonus)** | Accessible blog post summarizing our work and findings | [Read Article](https://medium.com/@chaitya0623/when-to-remember-distilling-dynamic-kv-cache-compression-for-reasoning-d562ab29da2d) |
 
 ---
 
@@ -92,15 +106,7 @@ pip install -r requirements.txt
 
 ---
 
-### B. WandB Dashboard
-
-View experiment metrics on our public WandB dashboards:
-- **CCM LoRA Training Metrics (from C.3 below)**: [WandB Training Dashboard](https://wandb.ai/lorena-yantianyi1020/hpml-dynamic-compression?nw=nwuserlorenayantianyi1020)
-- **Evaluation Metrics (from D below)**: [WandB Evaluation Dashboard](https://wandb.ai/cankeremakbulut-personal/hpml-dynamic-compression/workspace?nw=nwusercankeremakbulut)
-
----
-
-### C. Training
+### B. Training
 
 #### Stage 1: Data Generation
 Generate GSM8K samples with `<COMP>` tokens using GPT-4o-mini:
@@ -177,7 +183,7 @@ CUDA_VISIBLE_DEVICES=0 uv run python run.py \
 
 ---
 
-### D. Evaluation
+### C. Evaluation
 
 Run evaluation on the GSM8K test set:
 
@@ -198,7 +204,7 @@ uv run python src/analysis_module/eval_compression.py \
 
 ---
 
-### E. Quickstart: Minimum Reproducible Result
+### D. Quickstart: Minimum Reproducible Result
 
 To reproduce our main result (32% accuracy with 1.41x compression):
 
