@@ -1,3 +1,12 @@
+"""
+Common utility functions for training and evaluation.
+
+Includes:
+- Random seed management for reproducibility
+- WandB initialization and logging helpers
+- Configuration setup utilities
+"""
+
 import os
 import random
 
@@ -12,6 +21,7 @@ from omegaconf import OmegaConf
 
 
 def _git_commit_hash() -> Optional[str]:
+    """Get current git commit hash for experiment tracking"""
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
     except Exception:
@@ -19,6 +29,7 @@ def _git_commit_hash() -> Optional[str]:
 
 
 def _sha256_file(path: str) -> Optional[str]:
+    """Compute SHA256 hash of a file for artifact versioning"""
     try:
         h = hashlib.sha256()
         with open(path, "rb") as f:
@@ -30,6 +41,7 @@ def _sha256_file(path: str) -> Optional[str]:
 
 
 def seed_all(seed):
+    """Set random seeds for reproducibility across all libraries."""
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
@@ -41,6 +53,7 @@ def seed_all(seed):
 
 
 def prepare_wandb(configs):
+    """Initialize WandB logging if enabled in config"""
     # Check if parameter passed or if set within environ
     if (
         configs.training_args.use_wandb
@@ -68,6 +81,7 @@ def prepare_wandb(configs):
 
 
 def setup(configs):
+    """Initialize training: set seeds, handle checkpoint resume, setup WandB"""
     if configs.training_args.resume_from_checkpoint is not None:
         # Load configs from checkpoint
         output_dir = os.path.dirname(configs.training_args.resume_from_checkpoint)

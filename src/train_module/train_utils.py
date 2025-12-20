@@ -1,6 +1,14 @@
+"""
+Training utils for compression classifier
+
+Provides HuggingFace Trainer setup and metric computation
+"""
+
 import transformers
 
+
 def create_trainer_args(configs, train_data_size: int):
+    """Create HuggingFace TrainingArguments from config"""
     args = configs.training_args
     training_args = configs.training_args
 

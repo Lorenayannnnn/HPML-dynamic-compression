@@ -1,3 +1,9 @@
+"""
+Custom data collator for compression classifier training
+
+Handles padding of input_ids, attention_mask, and labels (with -100 for ignored tokens)
+"""
+
 from dataclasses import dataclass
 from typing import Union, Optional, List, Dict, Any
 

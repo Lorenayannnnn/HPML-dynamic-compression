@@ -1,6 +1,8 @@
 """
-- Tokenizer classes / setup_tokenizer
-- functions: tokenize, padding, collate_fn, setup_dataloader...
+Preprocessing utilities for compression classifier training
+
+Handles tokenization of GSM8K samples with <COMP> tokens, creating binary
+labels for the classifier (1 = next token is COMP, 0 = not COMP, -100 = ignore)
 """
 
 import random
@@ -19,6 +21,7 @@ def create_tokenizer(configs):
 
 
 def tokenize(input_text, configs, tokenizer):
+    """Tokenize text with <COMP> markers, creating binary classification labels"""
     comp_token_str = configs.model_args.compression_token
     
     # Split CoT by comp token str

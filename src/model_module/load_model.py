@@ -1,3 +1,9 @@
+"""
+Model loading utilities for compression classifier training
+
+Initializes the frozen LLM and trainable classifier head
+"""
+
 import torch
 
 

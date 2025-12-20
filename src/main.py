@@ -1,3 +1,14 @@
+"""
+Main entry point for training the compression classifier.
+
+Uses Hydra (https://hydra.cc/) for configuration management and orchestrates:
+1. Loading and preprocessing the GSM8K compressed dataset
+2. Initializing the compression probe model (frozen LM + trainable classifier)
+3. Training via HuggingFace Trainer
+
+Usage:
+    CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. uv run python src/main.py --config-name gsm8k_classifier
+"""
 
 import hydra
 

@@ -1,6 +1,10 @@
 """
-- classes: Dataset, dataloader...
-- functions: load_data_to_pd, collate_fn, setup_dataloader
+Data loading utilities for compression classifier training
+
+Functions:
+- load_gsm8k_compressed: Load GSM8K dataset with <COMP> annotations
+- load_data_from_hf: Load datasets from HuggingFace or local files
+- setup_dataloader: Create DataLoaders with custom collation
 """
 
 import json
@@ -12,6 +16,7 @@ from datasets import load_dataset
 from src.data_module.DataCollator import DataCollator
 
 def do_train_dev_test_split(raw_datasets, train_dev_test_split_ratio, seed):
+    """Split a single dataset into train/validation/test splits"""
     [train_frac, dev_frac, test_frac] = train_dev_test_split_ratio
     train_size = int(train_frac * len(raw_datasets))
     dev_size = int(dev_frac * len(raw_datasets))
