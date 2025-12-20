@@ -1,68 +1,117 @@
-# HPML Course Project: Dynamic KV Cache Compression
+# HPML Course Project: Dynamic KV Cache Compression for Reasoning
 
-## Overview
+## Team Information
+- **Team Name**: Dynamic Compression
+- **Members**:
+  - Lorena Yan (ty2575)
+  - Shayan Chowdhury (sc4040)
+  - Chaitya Shah (cs4621)
+  - Can Kerem Akbulut (cka2115)
 
-This project extends CCM (Compressed Context Memory) from conversation compression to **reasoning compression** by using a learned classifier to dynamically predict where to insert `<COMP>` tokens.
+---
 
-## Structure
+## 1. Problem Statement
 
-```
-├── data/
-│   └── gsm8k_compressed_train.json      # 1000 GSM8K samples with <COMP> tokens
-├── notebooks/
-│   └── ccm_reasoning.ipynb              # exploration notebook
-├── outputs/                             # training outputs (checkpoints, logs)
-├── scripts/
-│   ├── main.sh                          # bash script to run main.py
-│   └── visualize_XXX.sh
-├── src/
-│   ├── analysis_module/                 # scripts for analysis, plotting, etc.
-│   │   └── eval_compression.py          # TODO: utility functions for inserting COMP tokens, also for eval?
-│   ├── configs/
-│   │   ├── base_configs.yaml            # base configs
-│   │   └── gsm8k_classifier.yaml        # GSM8K classifier config
-│   ├── data_module/
-│   │   ├── DataCollator.py              # custom data collator w/ padding
-│   │   ├── generate_compression_dataset.py  # standalone dataset generation script (w/ gpt 4o-mini)
-│   │   ├── load_data.py                 # dataset loading
-│   │   └── preprocessing.py             # tokenization + label creation
-│   ├── model_module/
-│   │   ├── compression_classifier.py    # binary classifier head (MLP)
-│   │   ├── compression_probe_model.py   # wrapper: frozen LM + classifier
-│   │   └── load_model.py                # model initialization
-│   ├── train_module/
-│   │   └── train_utils.py               # HuggingFace Trainer setup
-│   ├── common_utils.py                  # seed, wandb setup utilities
-│   └── main.py                          # main entry point (hydra config)
-├── .gitignore
-└── requirements.txt
-```
+**Problem:** KV cache memory grows linearly during LLM generation, becoming a bottleneck for long-context reasoning. Existing compression methods use fixed heuristics that don't adapt to content importance.
 
-## Installation
-```bash
-git clone git@github.com:Lorenayannnnn/HPML-dynamic-compression.git
-cd HPML-dynamic-compression
-```
+**Our Solution:** Dynamic compression via a learned binary classifier that predicts optimal `<COMP>` token insertion points, enabling content-aware KV cache compression during chain-of-thought generation. 
 
-**Using `uv` (recommended):**
+---
+
+## 2. Model Description
+
+### Framework
+- **PyTorch** with HuggingFace Transformers (v4.40+)
+- **PEFT** for LoRA adapter training
+
+### Architecture Components
+
+| Component | Description |
+|-----------|-------------|
+| **Base LLM** | LLaMA-3.1-8B-Instruct (frozen during classifier training) |
+| **CCM LoRA Adapter** | Conditional LoRA (rank=16) on Q/K/V/O projections, ~8.4M params |
+| **Binary Classifier** | 2-layer MLP (4096 hidden dim), 16.8M params |
+
+### Key Modifications
+- Extended CCM from conversation compression to **reasoning compression** (intra-turn vs inter-turn)
+- Implemented **dynamic `<COMP>` token insertion** via learned classifier (vs fixed positions)
+- Added LLaMA-3.1 support to CCM codebase (originally LLaMA-7B)
+- Knowledge distillation from GPT-4o-mini for compression annotations
+
+---
+
+## 3. Final Results Summary
+
+### Main Results on GSM8K (200 test samples)
+
+| Method | Accuracy | Avg COMP Tokens | KV Cache (MB) | Compression Ratio | Latency (s) | Throughput |
+|--------|----------|-----------------|---------------|-------------------|-------------|------------|
+| No Compression (vanilla) | 42.0% | 0.00 | 37.45 | 1.00x | 8.54 | 27.8 tok/s |
+| Newline `<COMP>` (baseline) | 26.0% | 0.42 | 30.55 | 1.23x | 16.58 | 13.4 tok/s |
+| **Classifier (τ=0.9) [Ours]** | **32.0%** | 0.52 | 26.63 | **1.41x** | 18.44 | 11.1 tok/s |
+
+### Classifier Overhead
+
+| Metric | Value |
+|--------|-------|
+| Classifier Parameters | 16.8M |
+| Classifier Memory | 32 MB |
+| Latency Overhead | 0.39% |
+| Avg Classifier Time | 75 ms/sample |
+
+### Key Observations
+- **Our dynamic classifier outperforms the static newline baseline on both accuracy (32% vs 26%) and compression ratio (1.41x vs 1.23x)**
+- The threshold τ controls the accuracy-compression trade-off: lower τ = more aggressive compression
+- Classifier overhead is minimal (<0.4% of total inference time)
+- Gap from vanilla LLM (42%) reflects the difficulty of reasoning compression where exact values matter
+
+---
+
+## 4. Reproducibility Instructions
+
+### A. Requirements
+
+**System Requirements:**
+- NVIDIA GPU with 24+ GB VRAM (tested on A100)
+- CUDA 11.8+
+- Python 3.10+
+
+**Install dependencies:**
+
+Using `uv` (recommended):
 ```bash
 uv sync
 ```
 
-**Using conda:**
+Using conda/pip:
 ```bash
 conda create -n hpml-compress python=3.13
 conda activate hpml-compress
 pip install -r requirements.txt
 ```
 
-## Phase 1: Data Generation
+---
 
+### B. WandB Dashboard
+
+View experiment metrics on our public WandB dashboards:
+- **CCM LoRA Training Metrics (from C.3 below)**: [WandB Training Dashboard](https://wandb.ai/lorena-yantianyi1020/hpml-dynamic-compression?nw=nwuserlorenayantianyi1020)
+- **Evaluation Metrics (from D below)**: [WandB Evaluation Dashboard](https://wandb.ai/cankeremakbulut-personal/hpml-dynamic-compression/workspace?nw=nwusercankeremakbulut)
+
+---
+
+### C. Training
+
+#### Stage 1: Data Generation
 Generate GSM8K samples with `<COMP>` tokens using GPT-4o-mini:
 
 ```bash
+# Step 1: Set OpenAI API key
+export OPENAI_API_KEY="your-key-here"
+
+# Step 2: Generate compression-annotated data
 uv run python src/data_module/generate_compression_dataset.py \
-    --num_samples 500 \
+    --num_samples 1000 \
     --output data/gsm8k_compressed_train.json
 ```
 
@@ -78,12 +127,11 @@ Script supports resuming (from crashes/rate limiting).
 }
 ```
 
-## Phase 2: Classifier Training
-
+#### Stage 2: Classifier Training
 Train the binary classifier to predict `<COMP>` token positions:
-
 ```bash
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. uv run python src/main.py --config-name gsm8k_classifier
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. uv run python src/main.py \
+    --config-name gsm8k_classifier
 ```
 
 **Architecture:**
@@ -96,21 +144,21 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. uv run python src/main.py --config-name gsm8
 - 80/10/10 train/val/test split
 - Outputs saved to `outputs/classifier/`
 
-## Phase 3: CCM Compression Training
-
+#### Stage 3: CCM LoRA Compression Training
 Train CCM's conditional LoRA to learn compression at `<COMP>` positions:
 
 ```bash
+# Step 1: Navigate to Context-Memory
 cd Context-Memory && uv sync
 
+# Step 2: Run CCM training
 CUDA_VISIBLE_DEVICES=0 uv run python run.py \
     --model llama-3.1-8b-instruct \
     --dataset gsm8k \
     --train \
-    --run_id run1 \
+    --run_id ccm_gsm8k_run1
     --no_wandb  # Remove for actual runs with logging
 ```
-
 **Key Options:**
 | Flag | Description |
 |------|-------------|
@@ -127,59 +175,140 @@ CUDA_VISIBLE_DEVICES=0 uv run python run.py \
 
 **Resumption:** Use the same `--run_id` to resume both checkpoints and wandb. Use a new `--run_id` to start fresh.
 
-## Phase 4: Evaluation
+---
 
-Evaluation is performed on the GSM8K test set using **online generation with KV cache compression**.
+### D. Evaluation
 
-To run **dynamic classifier-based compression (OURS)**:
+Run evaluation on the GSM8K test set:
+
 ```bash
-uv run python src/analysis_module/eval_compression.py
+# No compression baseline (vanilla LLM)
+uv run python src/analysis_module/eval_compression.py \
+    --method compression_none
+
+# Static baseline (newline-based COMP insertion)
+uv run python src/analysis_module/eval_compression.py \
+    --method compression_newline
+
+# Our dynamic classifier
+uv run python src/analysis_module/eval_compression.py \
+    --method compression_classifier \
+    --threshold 0.9
 ```
 
-To run the static baseline (newline-based <COMP> insertion):
+---
+
+### E. Quickstart: Minimum Reproducible Result
+
+To reproduce our main result (32% accuracy with 1.41x compression):
+
 ```bash
-uv run python src/analysis_module/eval_compression.py --do_baseline
+# Step 1: Clone and setup environment
+git clone https://github.com/Lorenayannnnn/HPML-dynamic-compression.git
+cd HPML-dynamic-compression
+uv sync
+
+# Step 2: Download pre-trained checkpoints (if available)
+# Or train from scratch following Section C above
+
+# Step 3: Run evaluation with our classifier
+uv run python src/analysis_module/eval_compression.py \
+    --method compression_classifier \
+    --threshold 0.9 \
+    --test_dataset data/gsm8k-test-200.json
+
+# Step 4: Compare with baseline
+uv run python src/analysis_module/eval_compression.py \
+    --method compression_newline \
+    --test_dataset data/gsm8k-test-200.json
 ```
 
-All paths (models, classifier, dataset) and generation settings use default values defined in the script.
-The script reports accuracy, number of <COMP> tokens, estimated KV cache size, and latency, averaged over the test set.
+Expected output:
+```
+Accuracy:            32.00%
+Avg COMP tokens:     0.52 (±0.70)
+Avg KV Cache (MB):   26.63 (±15.96)
+```
 
-## Workflow
+---
 
-1. **Entry point:** [main.py](src/main.py)
-2. **Configuration:** [gsm8k_classifier.yaml](src/configs/gsm8k_classifier.yaml) or [base_configs.yaml](src/configs/base_configs.yaml)
+## 5. Repository Structure
+
+```
+├── data/
+│   ├── gsm8k_compressed_train.json           # 1000 GSM8K samples with <COMP> tokens
+│   └── gsm8k-test-200.json                   # Test set for evaluation
+├── notebooks/
+│   └── ccm_reasoning.ipynb                   # Exploration notebook
+├── outputs/                                  # Training outputs (checkpoints, logs)
+│   ├── classifier/                           # Binary classifier checkpoints
+│   ├── OURS_llama-3.1.../                    # Our CCM+classifier model
+│   └── baseline_.../                         # Baseline CCM model
+├── scripts/
+│   └── main.sh                               # Bash script to run main.py
+├── src/
+│   ├── analysis_module/                      # Evaluation and analysis scripts
+│   │   ├── eval_compression.py               # Main evaluation script
+│   │   ├── gsm8k_utils.py                    # GSM8K answer extraction utilities
+│   │   └── profiled_eval.py                  # PyTorch profiler integration
+│   ├── configs/
+│   │   ├── base_configs.yaml                 # Base configuration
+│   │   └── gsm8k_classifier.yaml             # GSM8K classifier config
+│   ├── data_module/
+│   │   ├── DataCollator.py                   # Custom data collator with padding
+│   │   ├── generate_compression_dataset.py   # Dataset generation (GPT-4o-mini)
+│   │   ├── load_data.py                      # Dataset loading utilities
+│   │   └── preprocessing.py                  # Tokenization and label creation
+│   ├── model_module/
+│   │   ├── ccm_llama.py                      # CCM-adapted LLaMA model
+│   │   ├── compression_classifier.py         # Binary classifier head (MLP)
+│   │   ├── compression_probe_model.py        # Wrapper: frozen LM + classifier
+│   │   ├── load_model.py                     # Model initialization
+│   │   └── peft_loader.py                    # PEFT adapter loading utilities
+│   ├── train_module/
+│   │   └── train_utils.py                    # HuggingFace Trainer setup
+│   ├── common_utils.py                       # Seed, WandB setup utilities
+│   └── main.py                               # Main entry point (Hydra config)
+├── Context-Memory/                           # CCM framework (submodule)
+│   ├── run.py                                # CCM training entry point
+│   └── src/                                  # CCM source code
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## 6. Workflow
+
+1. **Entry point:** [main.py](src/main.py) - Hydra-based configuration
+2. **Configuration:** [gsm8k_classifier.yaml](src/configs/gsm8k_classifier.yaml)
 3. **Load data:** [load_data.py](src/data_module/load_data.py) - `load_gsm8k_compressed()` for JSON with train/val/test splits
 4. **Preprocessing:** [preprocessing.py](src/data_module/preprocessing.py) - `tokenize_gsm8k()` splits by `<COMP>` and creates labels
 5. **Model:**
-   - [compression_classifier.py](src/model_module/compression_classifier.py) - Binary head, 2-layer MLP 
+   - [compression_classifier.py](src/model_module/compression_classifier.py) - Binary classifier head (2-layer MLP)
    - [compression_probe_model.py](src/model_module/compression_probe_model.py) - Frozen LM + classifier wrapper
 6. **Training:** [train_utils.py](src/train_module/train_utils.py) - HuggingFace Trainer
+7. **Evaluation:** [eval_compression.py](src/analysis_module/eval_compression.py) - Online generation with KV compression
 
-## TODOs
+---
 
-### Phase 2: Classifier Training Fixes
-- [x] Fix `common_utils.py`: `from random import random` → `import random`
-- [x] Fix `common_utils.py`: Add `OmegaConf.set_struct(configs, False)` before setting `wandb_run_name`
-- [x] Fix `compression_probe_model.py`: Import path → `from src.model_module.compression_classifier`
-- [x] Fix `compression_probe_model.py`: `next_is_COMP_label` undefined → assign from `labels`
-- [x] Fix `compression_probe_model.py`: Cast hidden states to float32 (LM outputs fp16)
-- [x] Fix `load_model.py`: Remove `freeze_lm=True` (LM frozen internally in `__init__`)
-- [x] Fix `train_utils.py`: `configs.use_wandb` → `training_args.use_wandb`
-- [x] Fix `train_utils.py`: `evaluation_strategy` → `eval_strategy` (transformers API)
+## 7. Notes
 
-### Phase 3: CCM Compression Training
-- [x] Add LLaMA-3.1 support to CCM code (`context-memory/`)
-- [x] Create GSM8K data format for CCM
-- [x] Train conditional LoRA
+- All scripts are located in `src/` with modular organization
+- Trained models are saved in `outputs/`
+- Requires HuggingFace token for LLaMA-3.1 access: `huggingface-cli login`
+- GPU memory: ~24GB for training, ~16GB for inference
 
-### Phase 4: Integration & Inference
-- [x] Create unified inference pipeline (classifier + CCM)
-- [x] Implement baseline methods (no compression, fixed interval, random)
+### Contact
+- Lorena Yan: ty2575@columbia.edu
+- Shayan Chowdhury: sc4040@columbia.edu
+- Chaitya Shah: cs4621@columbia.edu
+- Can Kerem Akbulut: cka2115@columbia.edu
 
-### Phase 5: Evaluation
-- [x] Run comprehensive evaluation on GSM8K test set
-- [x] Generate comparison artifacts (accuracy vs. compression trade-off)
+---
 
-### Phase 6: Meta-Analysis
-- [ ] Categorize compression points (after calculations, conclusions, etc.)
-- [ ] Analyze what's compressible vs. what must be retained
+## Acknowledgments
+
+This project was a final project for COMS 6998: High Performance Machine Learning with Prof. Kaoutar El Maghraoui in Fall 2025; thank you to her and the TAs for their guidance! 
+
+This project builds on the [Compressed Context Memory (CCM)](https://github.com/snu-mllab/Context-Memory) framework by Kim et al. (2023).
